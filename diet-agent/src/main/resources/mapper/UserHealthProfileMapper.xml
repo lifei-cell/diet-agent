@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.diet.mapper.UserHealthProfileMapper">
+
+    <resultMap id="UserHealthProfileMap" type="com.diet.model.UserHealthProfileRow">
+        <id property="userId" column="user_id"/>
+        <result property="heightCm" column="height_cm"/>
+        <result property="weightKg" column="weight_kg"/>
+        <result property="age" column="age"/>
+        <result property="activityLevel" column="activity_level"/>
+        <result property="diseaseHistory" column="disease_history"/>
+        <result property="profileGoal" column="profile_goal"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <select id="findByUserId" resultMap="UserHealthProfileMap">
+        SELECT user_id, height_cm, weight_kg, age, activity_level, disease_history, profile_goal, created_at, updated_at
+        FROM user_health_profile
+        WHERE user_id = #{userId}
+    </select>
+
+    <insert id="upsert" parameterType="com.diet.model.UserHealthProfileRow">
+        INSERT INTO user_health_profile (
+            user_id, height_cm, weight_kg, age, activity_level, disease_history, profile_goal, created_at, updated_at
+        ) VALUES (
+            #{userId}, #{heightCm}, #{weightKg}, #{age}, #{activityLevel}, #{diseaseHistory}, #{profileGoal}, NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            height_cm = VALUES(height_cm),
+            weight_kg = VALUES(weight_kg),
+            age = VALUES(age),
+            activity_level = VALUES(activity_level),
+            disease_history = VALUES(disease_history),
+            profile_goal = VALUES(profile_goal),
+            updated_at = NOW()
+    </insert>
+</mapper>
