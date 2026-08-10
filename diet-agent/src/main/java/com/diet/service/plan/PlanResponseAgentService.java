@@ -48,6 +48,7 @@ public class PlanResponseAgentService {
             String userInput,
             SourceMode sourceMode,
             SlotBundle sharedSlots,
+            NutritionConstraints nutritionConstraints,
             List<MealPlanService.PlannedMeal> plannedMeals
     ) {
         List<MealPlanService.PlannedMeal> safePlans = plannedMeals == null ? List.of() : plannedMeals;
@@ -70,7 +71,7 @@ public class PlanResponseAgentService {
                     "PlanResponseAgent",
                     modelName,
                     agent,
-                    buildUserPrompt(userInput, sourceMode, sharedSlots, safePlans)
+                    buildUserPrompt(userInput, sourceMode, sharedSlots, nutritionConstraints, safePlans)
             );
             ParsedOutput parsed = parseOutput(response.getTextContent(), safePlans, sharedSlots);
             RecommendResult recommend = new RecommendResult(parsed.options(), needDisclaimer);
@@ -89,6 +90,7 @@ public class PlanResponseAgentService {
             String userInput,
             SourceMode sourceMode,
             SlotBundle sharedSlots,
+            NutritionConstraints nutritionConstraints,
             List<MealPlanService.PlannedMeal> plannedMeals
     ) {
         StringBuilder mealSection = new StringBuilder();
@@ -108,9 +110,11 @@ public class PlanResponseAgentService {
                 用户原话：%s
                 数据源模式：%s
                 共享槽位：%s
+                营养硬约束：%s
                 各餐次候选：%s
                 请输出 JSON，包含 mealPlans 数组（每项 mealTime + mealId + reason）和 speechText；mealId 必须来自对应餐次候选。
-                """.formatted(userInput, sourceMode, sharedSlots, mealSection);
+                只可引用候选中已有的营养数据，不要杜撰数值。
+                """.formatted(userInput, sourceMode, sharedSlots, NutritionConstraints.sanitize(nutritionConstraints), mealSection);
     }
 
     private ParsedOutput parseOutput(String content, List<MealPlanService.PlannedMeal> plannedMeals, SlotBundle sharedSlots) {
@@ -158,7 +162,8 @@ public class PlanResponseAgentService {
 
     private RecommendedMealOption toOption(MealItem meal, String reason, SlotBundle querySlots) {
         SlotBundle displaySlots = querySlots != null ? querySlots : meal.slots();
-        return new RecommendedMealOption(meal.id(), meal.sourceType(), meal.name(), reason, meal.matchScore(), displaySlots);
+        return new RecommendedMealOption(
+                meal.id(), meal.sourceType(), meal.name(), reason, meal.matchScore(), displaySlots, meal.nutrition());
     }
 
     private String templateReason(MealPlanService.PlannedMeal planned, SlotBundle sharedSlots) {
@@ -210,6 +215,7 @@ public class PlanResponseAgentService {
                         option.matchedSlots().cuisine(),
                         option.matchedSlots().taste(),
                         option.matchedSlots().convenience(),
+                        option.nutrition(),
                         option.matchScore()
                 ))
                 .toList();

@@ -31,6 +31,8 @@ public class MealRankRequest {
      * 当前用户，用于加载长期偏好和餐食反馈分。
      */
     private Long userId;
+    /** 在硬过滤通过后，用于计算营养适配分。 */
+    private NutritionConstraints nutritionConstraints;
 
     /**
      * 需要排除的历史推荐 ID。

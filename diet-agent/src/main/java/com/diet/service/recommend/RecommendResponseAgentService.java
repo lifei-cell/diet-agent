@@ -4,6 +4,7 @@ import com.diet.agent.factory.AgentFactory;
 import com.diet.enums.SourceMode;
 import com.diet.model.MealItem;
 import com.diet.model.MealResponse;
+import com.diet.model.NutritionConstraints;
 import com.diet.model.RecommendResult;
 import com.diet.model.RecommendedMealOption;
 import com.diet.model.ResponseResult;
@@ -72,6 +73,7 @@ public class RecommendResponseAgentService {
             String userInput,
             SourceMode sourceMode,
             SlotBundle slots,
+            NutritionConstraints nutritionConstraints,
             List<MealItem> rankedMeals) {
         // 取重排结果 top3 作为 LLM 输入候选（不允许编造候选之外的餐食）
         List<MealItem> topMeals = rankedMeals == null ? List.of() : rankedMeals.stream().limit(3).toList();
@@ -95,7 +97,7 @@ public class RecommendResponseAgentService {
                     "RecommendResponseAgent",
                     modelName,
                     agent,
-                    buildUserPrompt(userInput, sourceMode, slots, topMeals)
+                    buildUserPrompt(userInput, sourceMode, slots, nutritionConstraints, topMeals)
             );
             // 解析 Agent JSON 输出为 recommendations + speechText
             ParsedOutput parsed = parseOutput(response.getTextContent(), topMeals, slots);
@@ -117,14 +119,22 @@ public class RecommendResponseAgentService {
     /**
      * 构造 RecommendResponseAgent 的输入 prompt。
      */
-    private String buildUserPrompt(String userInput, SourceMode sourceMode, SlotBundle slots, List<MealItem> topMeals) {
+    private String buildUserPrompt(
+            String userInput,
+            SourceMode sourceMode,
+            SlotBundle slots,
+            NutritionConstraints nutritionConstraints,
+            List<MealItem> topMeals
+    ) {
         return """
                 用户原话：%s
                 数据源模式：%s
                 本轮槽位：%s
+                营养硬约束：%s
                 候选餐食：%s
                 请输出 JSON，包含 recommendations 数组（每项 mealId + reason）和 speechText，不要编造候选之外的餐食。
-                """.formatted(userInput, sourceMode, slots, topMeals);
+                候选已通过硬约束过滤；理由可引用候选中已有的营养数据，不能杜撰数值。
+                """.formatted(userInput, sourceMode, slots, NutritionConstraints.sanitize(nutritionConstraints), topMeals);
     }
 
     /**
@@ -179,7 +189,8 @@ public class RecommendResponseAgentService {
      * MealItem + reason 转为 RecommendedMealOption。
      */
     private RecommendedMealOption toOption(MealItem meal, String reason) {
-        return new RecommendedMealOption(meal.id(), meal.sourceType(), meal.name(), reason, meal.matchScore(), meal.slots());
+        return new RecommendedMealOption(
+                meal.id(), meal.sourceType(), meal.name(), reason, meal.matchScore(), meal.slots(), meal.nutrition());
     }
 
     /**
@@ -222,6 +233,7 @@ public class RecommendResponseAgentService {
                 option.matchedSlots().cuisine(),
                 option.matchedSlots().taste(),
                 option.matchedSlots().convenience(),
+                option.nutrition(),
                 option.matchScore()
         );
     }

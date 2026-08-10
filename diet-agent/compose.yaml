@@ -1,0 +1,47 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: diet-agent-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: diet_db
+      MYSQL_USER: diet_app
+      MYSQL_PASSWORD: ${DB_PASSWORD:-diet-agent-dev-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-diet-agent-root-password}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: diet-agent:local
+    container_name: diet-agent-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/diet_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      SPRING_DATASOURCE_USERNAME: diet_app
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-diet-agent-dev-password}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DIET_LLM_MAIN_MODEL: ${DIET_LLM_MAIN_MODEL:-qwen3-max}
+      DIET_LLM_LIGHT_MODEL: ${DIET_LLM_LIGHT_MODEL:-qwen3-max}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/ > /dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+
+volumes:
+  mysql_data:

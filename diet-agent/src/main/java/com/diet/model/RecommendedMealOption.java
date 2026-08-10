@@ -1,7 +1,6 @@
 package com.diet.model;
 
 import com.diet.enums.SourceMode;
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
@@ -11,7 +10,6 @@ import lombok.experimental.Accessors;
  */
 @Data
 @Accessors(fluent = true)
-@AllArgsConstructor
 public class RecommendedMealOption {
     /** 餐食 ID，必须来自数据库候选。 */
     private Long itemId;
@@ -25,6 +23,37 @@ public class RecommendedMealOption {
     private double matchScore;
     /** 餐食原始槽位，用于前端卡片和 Trace。 */
     private SlotBundle matchedSlots;
+    /** 餐食营养信息，来自数据库候选，LLM 不可自行生成。 */
+    private NutritionInfo nutrition;
+
+    public RecommendedMealOption(
+            Long itemId,
+            SourceMode sourceType,
+            String name,
+            String reason,
+            double matchScore,
+            SlotBundle matchedSlots
+    ) {
+        this(itemId, sourceType, name, reason, matchScore, matchedSlots, NutritionInfo.empty());
+    }
+
+    public RecommendedMealOption(
+            Long itemId,
+            SourceMode sourceType,
+            String name,
+            String reason,
+            double matchScore,
+            SlotBundle matchedSlots,
+            NutritionInfo nutrition
+    ) {
+        this.itemId = itemId;
+        this.sourceType = sourceType;
+        this.name = name;
+        this.reason = reason;
+        this.matchScore = matchScore;
+        this.matchedSlots = matchedSlots == null ? SlotBundle.empty() : matchedSlots;
+        this.nutrition = nutrition == null ? NutritionInfo.empty() : nutrition;
+    }
 }
 
 

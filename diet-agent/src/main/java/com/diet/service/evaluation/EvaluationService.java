@@ -279,8 +279,8 @@ public class EvaluationService {
                     }
                 // SLOTS_MERGED 是历史槽位和本轮槽位合并后的最终槽位。
                 } else if ("SLOTS_MERGED".equals(eventType)) {
-                    // 用合并后的槽位覆盖前面的备选槽位。
-                    slots = slots(output);
+                    // 兼容旧 Trace 直接输出 SlotBundle，以及新 Trace 同时记录营养约束时的 {slots, nutritionConstraints} 结构。
+                    slots = slots(output.path("slots").isObject() ? output.path("slots") : output);
                 // CLARIFY_DECISION 记录澄清节点 ASK/READY 的结构化结果。
                 } else if ("CLARIFY_DECISION".equals(eventType)) {
                     // 提取 clarify action，用于和 expected_clarify_action 比较。

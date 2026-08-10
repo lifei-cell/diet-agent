@@ -35,6 +35,12 @@ public interface MealMapper {
             @Param("cuisineJson") String cuisineJson,
             @Param("tasteJson") String tasteJson,
             @Param("convenienceJson") String convenienceJson,
+            @Param("maxEnergyKcal") Double maxEnergyKcal,
+            @Param("minProteinG") Double minProteinG,
+            @Param("maxFatG") Double maxFatG,
+            @Param("maxCarbohydrateG") Double maxCarbohydrateG,
+            @Param("maxSodiumMg") Double maxSodiumMg,
+            @Param("excludedAllergensJson") String excludedAllergensJson,
             @Param("limit") int limit
     );
 }

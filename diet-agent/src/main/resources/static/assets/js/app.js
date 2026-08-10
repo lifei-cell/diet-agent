@@ -255,7 +255,7 @@
                             </div>
                         </div>
                         <div class="chips">
-                            ${["早餐想吃方便一点", "晚饭推荐清淡低脂的", "今天心情一般，想吃点热乎的", "换一批，不想吃刚才那些", "我胃不舒服，应该吃什么"].map((text) => `<button class="chip" data-action="quick-message" data-message="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}
+                            ${["早餐想吃方便一点", "午餐不超过600大卡，蛋白质至少30g，不吃花生", "晚饭推荐清淡低脂的", "今天心情一般，想吃点热乎的", "换一批，不想吃刚才那些", "我胃不舒服，应该吃什么"].map((text) => `<button class="chip" data-action="quick-message" data-message="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}
                         </div>
                     </div>
                     <div class="card">
@@ -391,6 +391,7 @@
                 </div>
                 <p class="field-hint full">标签下拉框支持多选：Windows 按住 Ctrl，Mac 按住 Command 点击可多项选择。</p>
                 ${Object.entries(SLOT_LABELS).map(([key, label]) => renderSlotPicker(key, label, meal[key] || [])).join("")}
+                ${renderNutritionFields(meal.nutrition || {})}
                 <div class="field full">
                     <div class="button-row">
                         <button class="btn primary" type="submit">${meal.id ? "保存修改" : "创建餐食"}</button>
@@ -423,6 +424,30 @@
             </div>
         `;
     }
+    function renderNutritionFields(nutrition) {
+        const data = nutrition || {};
+        const allergens = Array.isArray(data.allergens) ? data.allergens.join("，") : "";
+        return [
+            '<section class="field full nutrition-fields">',
+            '<label>营养信息与过敏原（可选）</label>',
+            '<p class="field-hint">每份餐食的估算值；填写后可参与热量、蛋白质与过敏原硬约束筛选。</p>',
+            '<div class="form-grid">',
+            nutritionInput("energyKcal", "热量（kcal）", data.energyKcal, "0.1"),
+            nutritionInput("proteinG", "蛋白质（g）", data.proteinG, "0.1"),
+            nutritionInput("fatG", "脂肪（g）", data.fatG, "0.1"),
+            nutritionInput("carbohydrateG", "碳水（g）", data.carbohydrateG, "0.1"),
+            nutritionInput("fiberG", "膳食纤维（g）", data.fiberG, "0.1"),
+            nutritionInput("sodiumMg", "钠（mg）", data.sodiumMg, "1"),
+            '</div>',
+            '<div class="field full"><label>过敏原（用逗号分隔）</label><input name="allergens" value="' + escapeHtml(allergens) + '" placeholder="例如：花生，乳制品"></div>',
+            '<div class="field full"><label>营养数据来源</label><input name="nutritionSource" value="' + escapeHtml(data.nutritionSource || "") + '" placeholder="例如：包装标签、食堂菜单、人工估算"></div>',
+            '</section>'
+        ].join("");
+    }
+    function nutritionInput(name, label, value, step) {
+        const displayValue = value === null || value === undefined ? "" : value;
+        return '<div class="field"><label>' + escapeHtml(label) + '</label><input name="' + name + '" type="number" min="0" step="' + step + '" value="' + escapeHtml(displayValue) + '"></div>';
+    }
     function emptyMeal() {
         return {
             name: "",
@@ -432,7 +457,11 @@
             healthGoal: [],
             cuisine: [],
             taste: [],
-            convenience: []
+            convenience: [],
+            nutrition: {
+                energyKcal: null, proteinG: null, fatG: null, carbohydrateG: null,
+                fiberG: null, sodiumMg: null, allergens: [], nutritionSource: null
+            }
         };
     }
     function renderMealList(meals, options) {
@@ -454,6 +483,7 @@
                     ${meal.matchScore ? `<span class="score">匹配 ${Math.round(meal.matchScore * 100)}%</span>` : ""}
                 </header>
                 <div class="chips">${mealTags(meal).map((tag) => `<span class="chip selected">${escapeHtml(tag)}</span>`).join("")}</div>
+                ${renderNutrition(meal.nutrition)}
                 ${editable ? `
                     <div class="button-row">
                         <button class="btn soft" data-action="edit-meal" data-id="${escapeHtml(meal.id)}">编辑</button>
@@ -472,6 +502,18 @@
     }
     function mealTags(meal) {
         return Object.keys(SLOT_LABELS).flatMap((key) => (meal[key] || []).map((value) => `${SLOT_LABELS[key]}：${value}`));
+    }
+    function renderNutrition(nutrition) {
+        if (!nutrition) {
+            return "";
+        }
+        const details = [];
+        if (nutrition.energyKcal !== null && nutrition.energyKcal !== undefined) details.push("热量 " + nutrition.energyKcal + " kcal");
+        if (nutrition.proteinG !== null && nutrition.proteinG !== undefined) details.push("蛋白质 " + nutrition.proteinG + " g");
+        if (nutrition.fatG !== null && nutrition.fatG !== undefined) details.push("脂肪 " + nutrition.fatG + " g");
+        if (nutrition.carbohydrateG !== null && nutrition.carbohydrateG !== undefined) details.push("碳水 " + nutrition.carbohydrateG + " g");
+        if (Array.isArray(nutrition.allergens) && nutrition.allergens.length) details.push("过敏原：" + nutrition.allergens.join("、"));
+        return details.length ? '<p class="field-hint nutrition-summary">' + escapeHtml(details.join(" · ")) + '</p>' : "";
     }
     async function ensurePersonalMeals(force) {
         if (!force && state.personalMeals.length) {
@@ -531,10 +573,24 @@
         Object.keys(SLOT_LABELS).forEach((key) => {
             payload[key] = formData.getAll(key).filter(Boolean);
         });
+        payload.nutrition = {
+            energyKcal: numberOrNull(formData.get("energyKcal")),
+            proteinG: numberOrNull(formData.get("proteinG")),
+            fatG: numberOrNull(formData.get("fatG")),
+            carbohydrateG: numberOrNull(formData.get("carbohydrateG")),
+            fiberG: numberOrNull(formData.get("fiberG")),
+            sodiumMg: numberOrNull(formData.get("sodiumMg")),
+            allergens: String(formData.get("allergens") || "").split(/[,，、]/).map((value) => value.trim()).filter(Boolean),
+            nutritionSource: String(formData.get("nutritionSource") || "").trim() || null
+        };
         return {
             id: String(formData.get("mealId") || "").trim(),
             payload
         };
+    }
+    function numberOrNull(value) {
+        const text = String(value || "").trim();
+        return text === "" ? null : Number(text);
     }
     function editMeal(id) {
         const meal = state.personalMeals.find((item) => String(item.id) === String(id));

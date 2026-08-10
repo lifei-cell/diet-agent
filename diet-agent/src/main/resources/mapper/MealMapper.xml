@@ -16,6 +16,14 @@
         <result property="cuisine" column="cuisine"/>
         <result property="taste" column="taste"/>
         <result property="convenience" column="convenience"/>
+        <result property="energyKcal" column="energy_kcal"/>
+        <result property="proteinG" column="protein_g"/>
+        <result property="fatG" column="fat_g"/>
+        <result property="carbohydrateG" column="carbohydrate_g"/>
+        <result property="fiberG" column="fiber_g"/>
+        <result property="sodiumMg" column="sodium_mg"/>
+        <result property="allergens" column="allergens"/>
+        <result property="nutritionSource" column="nutrition_source"/>
         <result property="createdAt" column="created_at"/>
         <result property="updatedAt" column="updated_at"/>
     </resultMap>
@@ -32,6 +40,14 @@
         cuisine,
         taste,
         convenience,
+        energy_kcal,
+        protein_g,
+        fat_g,
+        carbohydrate_g,
+        fiber_g,
+        sodium_mg,
+        allergens,
+        nutrition_source,
         created_at,
         updated_at
     </sql>
@@ -43,10 +59,12 @@
         INSERT INTO meal_item (
         source_type, owner_user_id, name,
         meal_time, mood, scene, health_goal, cuisine, taste, convenience,
+        energy_kcal, protein_g, fat_g, carbohydrate_g, fiber_g, sodium_mg, allergens, nutrition_source,
         created_at, updated_at
         ) VALUES (
         #{sourceType}, #{ownerUserId}, #{name},
         #{mealTime}, #{mood}, #{scene}, #{healthGoal}, #{cuisine}, #{taste}, #{convenience},
+        #{energyKcal}, #{proteinG}, #{fatG}, #{carbohydrateG}, #{fiberG}, #{sodiumMg}, #{allergens}, #{nutritionSource},
         NOW(), NOW()
         )
     </insert>
@@ -61,6 +79,14 @@
         cuisine = #{cuisine},
         taste = #{taste},
         convenience = #{convenience},
+        energy_kcal = #{energyKcal},
+        protein_g = #{proteinG},
+        fat_g = #{fatG},
+        carbohydrate_g = #{carbohydrateG},
+        fiber_g = #{fiberG},
+        sodium_mg = #{sodiumMg},
+        allergens = #{allergens},
+        nutrition_source = #{nutritionSource},
         updated_at = NOW()
         WHERE id = #{id}
         AND source_type = 'PERSONAL'
@@ -136,6 +162,15 @@
             AND (#{cuisineJson} = '[]' OR JSON_OVERLAPS(cuisine, #{cuisineJson}))
             AND (#{tasteJson} = '[]' OR JSON_OVERLAPS(taste, #{tasteJson}))
             AND (#{convenienceJson} = '[]' OR JSON_OVERLAPS(convenience, #{convenienceJson}))
+            AND (#{maxEnergyKcal} IS NULL OR (energy_kcal IS NOT NULL AND energy_kcal &lt;= #{maxEnergyKcal}))
+            AND (#{minProteinG} IS NULL OR (protein_g IS NOT NULL AND protein_g >= #{minProteinG}))
+            AND (#{maxFatG} IS NULL OR (fat_g IS NOT NULL AND fat_g &lt;= #{maxFatG}))
+            AND (#{maxCarbohydrateG} IS NULL OR (carbohydrate_g IS NOT NULL AND carbohydrate_g &lt;= #{maxCarbohydrateG}))
+            AND (#{maxSodiumMg} IS NULL OR (sodium_mg IS NOT NULL AND sodium_mg &lt;= #{maxSodiumMg}))
+            AND (
+                #{excludedAllergensJson} = '[]'
+                OR (allergens IS NOT NULL AND NOT JSON_OVERLAPS(allergens, #{excludedAllergensJson}))
+            )
         </where>
         ORDER BY updated_at DESC
         LIMIT #{limit}

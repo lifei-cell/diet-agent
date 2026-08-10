@@ -214,6 +214,14 @@ CREATE TABLE IF NOT EXISTS `meal_item`  (
   `cuisine` json NOT NULL,
   `taste` json NOT NULL,
   `convenience` json NOT NULL,
+  `energy_kcal` decimal(8,2) NULL,
+  `protein_g` decimal(8,2) NULL,
+  `fat_g` decimal(8,2) NULL,
+  `carbohydrate_g` decimal(8,2) NULL,
+  `fiber_g` decimal(8,2) NULL,
+  `sodium_mg` decimal(10,2) NULL,
+  `allergens` json NULL,
+  `nutrition_source` varchar(64) NULL,
   `created_at` datetime NOT NULL,
   `updated_at` datetime NOT NULL,
   PRIMARY KEY (`id`) USING BTREE,
@@ -224,11 +232,11 @@ CREATE TABLE IF NOT EXISTS `meal_item`  (
 -- ----------------------------
 -- Records of meal_item
 -- ----------------------------
-INSERT IGNORE INTO `meal_item` VALUES (1, 'PUBLIC', NULL, '番茄鸡蛋面', '[\"午餐\", \"晚餐\", \"三餐\"]', '[\"疲惫\", \"低落\"]', '[\"工作\", \"校园\", \"家里\"]', '[\"清淡\", \"养胃\", \"易消化\"]', '[\"家常\", \"粉面\"]', '[\"清淡\", \"番茄味\"]', '[\"快速\", \"一人食\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
-INSERT IGNORE INTO `meal_item` VALUES (2, 'PUBLIC', NULL, '清汤馄饨', '[\"早餐\", \"午餐\", \"晚餐\", \"三餐\"]', '[\"疲惫\", \"没胃口\"]', '[\"工作\", \"校园\", \"家里\"]', '[\"清淡\", \"养胃\", \"暖胃\"]', '[\"小吃\", \"粥汤\"]', '[\"清淡\", \"咸鲜\"]', '[\"快速\", \"少餐具\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
-INSERT IGNORE INTO `meal_item` VALUES (3, 'PUBLIC', NULL, '鸡胸肉轻食碗', '[\"午餐\", \"晚餐\"]', '[\"平静\", \"想放松\"]', '[\"工作\", \"运动后\"]', '[\"减脂\", \"高蛋白\", \"低油\", \"均衡\"]', '[\"轻食\"]', '[\"清淡\", \"咸鲜\"]', '[\"快速\", \"一人食\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
-INSERT IGNORE INTO `meal_item` VALUES (4, 'PUBLIC', NULL, '麻辣香锅', '[\"午餐\", \"晚餐\", \"夜宵\"]', '[\"开心\", \"想奖励自己\"]', '[\"周末\", \"聚餐\", \"夜宵\"]', '[\"均衡\", \"补能\"]', '[\"川菜\", \"小吃\"]', '[\"麻辣\", \"烟火气\"]', '[\"慢享\", \"多人共享\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
-INSERT IGNORE INTO `meal_item` VALUES (5, 'PERSONAL', 1, '土豆炖牛肉', '[\"晚餐\"]', '[\"平静\"]', '[\"校园\"]', '[\"补能\"]', '[\"湘菜\"]', '[\"辣\"]', '[]', '2026-07-01 23:22:49', '2026-07-01 23:22:49');
+INSERT IGNORE INTO `meal_item` (`id`, `source_type`, `owner_user_id`, `name`, `meal_time`, `mood`, `scene`, `health_goal`, `cuisine`, `taste`, `convenience`, `created_at`, `updated_at`) VALUES (1, 'PUBLIC', NULL, '番茄鸡蛋面', '[\"午餐\", \"晚餐\", \"三餐\"]', '[\"疲惫\", \"低落\"]', '[\"工作\", \"校园\", \"家里\"]', '[\"清淡\", \"养胃\", \"易消化\"]', '[\"家常\", \"粉面\"]', '[\"清淡\", \"番茄味\"]', '[\"快速\", \"一人食\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
+INSERT IGNORE INTO `meal_item` (`id`, `source_type`, `owner_user_id`, `name`, `meal_time`, `mood`, `scene`, `health_goal`, `cuisine`, `taste`, `convenience`, `created_at`, `updated_at`) VALUES (2, 'PUBLIC', NULL, '清汤馄饨', '[\"早餐\", \"午餐\", \"晚餐\", \"三餐\"]', '[\"疲惫\", \"没胃口\"]', '[\"工作\", \"校园\", \"家里\"]', '[\"清淡\", \"养胃\", \"暖胃\"]', '[\"小吃\", \"粥汤\"]', '[\"清淡\", \"咸鲜\"]', '[\"快速\", \"少餐具\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
+INSERT IGNORE INTO `meal_item` (`id`, `source_type`, `owner_user_id`, `name`, `meal_time`, `mood`, `scene`, `health_goal`, `cuisine`, `taste`, `convenience`, `created_at`, `updated_at`) VALUES (3, 'PUBLIC', NULL, '鸡胸肉轻食碗', '[\"午餐\", \"晚餐\"]', '[\"平静\", \"想放松\"]', '[\"工作\", \"运动后\"]', '[\"减脂\", \"高蛋白\", \"低油\", \"均衡\"]', '[\"轻食\"]', '[\"清淡\", \"咸鲜\"]', '[\"快速\", \"一人食\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
+INSERT IGNORE INTO `meal_item` (`id`, `source_type`, `owner_user_id`, `name`, `meal_time`, `mood`, `scene`, `health_goal`, `cuisine`, `taste`, `convenience`, `created_at`, `updated_at`) VALUES (4, 'PUBLIC', NULL, '麻辣香锅', '[\"午餐\", \"晚餐\", \"夜宵\"]', '[\"开心\", \"想奖励自己\"]', '[\"周末\", \"聚餐\", \"夜宵\"]', '[\"均衡\", \"补能\"]', '[\"川菜\", \"小吃\"]', '[\"麻辣\", \"烟火气\"]', '[\"慢享\", \"多人共享\"]', '2026-06-28 17:37:55', '2026-06-28 17:37:55');
+INSERT IGNORE INTO `meal_item` (`id`, `source_type`, `owner_user_id`, `name`, `meal_time`, `mood`, `scene`, `health_goal`, `cuisine`, `taste`, `convenience`, `created_at`, `updated_at`) VALUES (5, 'PERSONAL', 1, '土豆炖牛肉', '[\"晚餐\"]', '[\"平静\"]', '[\"校园\"]', '[\"补能\"]', '[\"湘菜\"]', '[\"辣\"]', '[]', '2026-07-01 23:22:49', '2026-07-01 23:22:49');
 
 -- ----------------------------
 -- Table structure for recommend_feedback

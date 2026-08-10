@@ -5,6 +5,7 @@ import com.diet.model.MealItem;
 import com.diet.model.MealRankRequest;
 import com.diet.model.MealRankResult;
 import com.diet.model.MealSearchRequest;
+import com.diet.model.NutritionConstraints;
 import com.diet.model.SlotBundle;
 import com.diet.service.meal.MealRankService;
 import com.diet.service.meal.MealSearchService;
@@ -76,7 +77,13 @@ public class MealPlanService {
     /**
      * 按餐次依次检索重排，每餐取 top1；跨餐次排除已选 mealId，避免三餐重复同一道菜。
      */
-    public List<PlannedMeal> planMeals(SourceMode sourceMode, Long userId, SlotBundle baseSlots, List<String> mealTimes) {
+    public List<PlannedMeal> planMeals(
+            SourceMode sourceMode,
+            Long userId,
+            SlotBundle baseSlots,
+            NutritionConstraints nutritionConstraints,
+            List<String> mealTimes
+    ) {
         List<String> targets = mealTimes == null || mealTimes.isEmpty() ? DEFAULT_PLAN_MEAL_TIMES : mealTimes;
         List<PlannedMeal> planned = new ArrayList<>();
         Set<Long> usedIds = new LinkedHashSet<>();
@@ -85,9 +92,9 @@ public class MealPlanService {
             SlotBundle querySlots = slotsForMealTime(baseSlots, mealTime);
             List<Long> excludeIds = List.copyOf(usedIds);
             List<MealItem> candidates = mealSearchService.search(
-                    new MealSearchRequest(sourceMode, userId, querySlots, excludeIds));
+                    new MealSearchRequest(sourceMode, userId, querySlots, nutritionConstraints, excludeIds));
             MealRankResult rankResult = mealRankService.rank(
-                    new MealRankRequest(candidates, querySlots, userId, excludeIds));
+                    new MealRankRequest(candidates, querySlots, userId, nutritionConstraints, excludeIds));
             List<MealItem> ranked = rankResult.meals();
             MealItem picked = ranked.stream()
                     .filter(item -> item != null && item.id() != null && !usedIds.contains(item.id()))

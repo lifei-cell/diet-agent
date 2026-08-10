@@ -7,6 +7,7 @@ public record MealRankScore(
         double contextScore,
         double preferenceScore,
         double feedbackScore,
+        double nutritionScore,
         double finalScore
 ) {
 }

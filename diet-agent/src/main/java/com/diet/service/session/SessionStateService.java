@@ -7,6 +7,7 @@ import com.diet.enums.SessionPhase;
 import com.diet.model.SessionRow;
 import com.diet.model.SessionState;
 import com.diet.model.SlotBundle;
+import com.diet.model.NutritionConstraints;
 import com.diet.enums.SourceMode;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -106,6 +107,7 @@ public class SessionStateService {
             JsonNode meta = root.path("_meta");                                             // _meta 存 sourceMode/intent 等
             SourceMode sourceMode = parseSourceMode(meta.path("sourceMode").asText(null), requestSourceMode);
             Intent currentIntent = parseIntent(meta.path("currentIntent").asText(null));
+            NutritionConstraints nutritionConstraints = readNutritionConstraints(meta.path("nutritionConstraints"));
             // 7 维槽位从 slots JSON 各字段读取
             SlotBundle slots = new SlotBundle(
                     readStringList(root, "mealTime"),
@@ -123,6 +125,7 @@ public class SessionStateService {
                     sourceMode,                              // PERSONAL / PUBLIC
                     currentIntent,                           // 当前意图
                     slots,                                   // 槽位
+                    nutritionConstraints,                    // 营养硬约束
                     parseLongList(row.getLastRecommendations()) // 上轮推荐 ID 列表
             );
         } catch (Exception e) {
@@ -158,6 +161,8 @@ public class SessionStateService {
         ObjectNode meta = objectMapper.createObjectNode();
         meta.put("sourceMode", state.sourceMode() == null ? null : state.sourceMode().name());
         meta.put("currentIntent", state.currentIntent() == null ? null : state.currentIntent().name());
+        meta.set("nutritionConstraints", objectMapper.valueToTree(
+                NutritionConstraints.sanitize(state.nutritionConstraints())));
         root.set("_meta", meta);
         return root.toString();
     }
@@ -182,6 +187,18 @@ public class SessionStateService {
         }
         return objectMapper.readValue(node.toString(), new TypeReference<List<String>>() {
         });
+    }
+
+    /** 从会话 meta 读取营养硬约束；旧会话没有该字段时回退为空约束。 */
+    private NutritionConstraints readNutritionConstraints(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return NutritionConstraints.empty();
+        }
+        try {
+            return NutritionConstraints.sanitize(objectMapper.treeToValue(node, NutritionConstraints.class));
+        } catch (Exception ignored) {
+            return NutritionConstraints.empty();
+        }
     }
 
     /**

@@ -20,4 +20,6 @@ public class ChatRequest {
     private String message;
     private SourceMode sourceMode;
     private Map<String, Object> context;
+    /** 可选的结构化硬约束；未提供时由 IntentAgent 从 message 中抽取。 */
+    private NutritionConstraints nutritionConstraints;
 }

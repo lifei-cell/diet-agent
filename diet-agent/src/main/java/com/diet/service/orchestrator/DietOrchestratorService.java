@@ -12,6 +12,7 @@ import com.diet.model.IntentResult;
 import com.diet.model.MealItem;
 import com.diet.model.MealRankRequest;
 import com.diet.model.MealRankResult;
+import com.diet.model.NutritionConstraints;
 import com.diet.model.MealSearchRequest;
 import com.diet.model.ChatRequest;
 import com.diet.model.ChatResponse;
@@ -235,7 +236,21 @@ public class DietOrchestratorService {
         }
 
         // 意图识别：调用 IntentAgent：传入 sessionId、userId、用户原文、历史槽位、最近 3 条对话摘要
-        IntentResult rawIntent = intentAgentService.recognize(sessionId, userId, request.message(), state.slots(), sessionService.recentConversationTurns(sessionId, userId, 3));
+        IntentResult recognizedIntent = intentAgentService.recognize(
+                sessionId,
+                userId,
+                request.message(),
+                state.slots(),
+                state.nutritionConstraints(),
+                sessionService.recentConversationTurns(sessionId, userId, 3)
+        );
+        NutritionConstraints requestConstraints = NutritionConstraints.sanitize(request.nutritionConstraints());
+        IntentResult rawIntent = new IntentResult(
+                recognizedIntent.intent(),
+                recognizedIntent.slots(),
+                NutritionConstraints.merge(recognizedIntent.nutritionConstraints(), requestConstraints),
+                recognizedIntent.confidence()
+        );
         // Trace 事件：INTENT_RECOGNIZED | 阶段 INTENT | 输入=用户原文 | 输出=IntentResult（intent/slots/confidence）
         agentTraceService.recordEvent("INTENT_RECOGNIZED", "INTENT", request.message(), rawIntent);
 
@@ -269,12 +284,23 @@ public class DietOrchestratorService {
     private ChatResponse handleRecommendation(String sessionId, Long userId, String userInput, String traceId, SessionState state, IntentResult intent) {
         // 将历史 slots 与 IntentAgent 本轮识别的 slots 合并（本轮非空覆盖，本轮空保留历史）
         SlotBundle mergedSlots = slotMergeService.merge(state.slots(), intent.slots());
+        NutritionConstraints mergedConstraints = NutritionConstraints.merge(
+                state.nutritionConstraints(), intent.nutritionConstraints());
 
         // Trace 事件：SLOTS_MERGED | 阶段 SLOT | 输入=stateSlots+intentSlots | 输出=mergedSlots
-        agentTraceService.recordEvent("SLOTS_MERGED", "SLOT", Map.of("stateSlots", state.slots(), "intentSlots", intent.slots()), mergedSlots);
+        agentTraceService.recordEvent(
+                "SLOTS_MERGED",
+                "SLOT",
+                Map.of("stateSlots", state.slots(), "intentSlots", intent.slots(),
+                        "stateNutritionConstraints", state.nutritionConstraints(),
+                        "intentNutritionConstraints", intent.nutritionConstraints()),
+                traceMap("slots", mergedSlots, "nutritionConstraints", mergedConstraints)
+        );
 
         // 基于合并槽位构建工作态：意图固定为 MEAL_RECOMMENDATION
-        SessionState workingState = state.withIntent(Intent.MEAL_RECOMMENDATION).withSlots(mergedSlots);
+        SessionState workingState = state.withIntent(Intent.MEAL_RECOMMENDATION)
+                .withSlots(mergedSlots)
+                .withNutritionConstraints(mergedConstraints);
 
         // 【重要】不能完全依靠agent的意图识别,在进入推荐之前,规则层面上也需要判断是否有足够的信息
         // 调用 ClarifyAgent：规则层先判缺失槽位，不足则 LLM 生成追问文案
@@ -316,6 +342,8 @@ public class DietOrchestratorService {
     private ChatResponse handleAdjust(String sessionId, Long userId, String userInput, String traceId, SessionState state, IntentResult intent) {
         // 合并历史槽位与本轮 IntentAgent 识别的槽位
         SlotBundle mergedSlots = slotMergeService.merge(state.slots(), intent.slots());
+        NutritionConstraints mergedConstraints = NutritionConstraints.merge(
+                state.nutritionConstraints(), intent.nutritionConstraints());
 
         // 从会话状态取出本会话已推荐过的 mealId 列表，供换一批时累积排除
         List<Long> excludeMealIds = state.lastRecommendations() == null ? List.of() : state.lastRecommendations();
@@ -326,6 +354,7 @@ public class DietOrchestratorService {
         // 构建调整态工作会话：意图=MEAL_ADJUST，phase=RECOMMEND
         SessionState workingState = state.withIntent(Intent.MEAL_ADJUST)
                 .withSlots(mergedSlots)
+                .withNutritionConstraints(mergedConstraints)
                 .withPhase(SessionPhase.RECOMMEND);
 
         // 进入推荐流水线，仅排除已推荐餐食，实现换一批
@@ -338,6 +367,8 @@ public class DietOrchestratorService {
     private ChatResponse handlePlan(String sessionId, Long userId, String userInput, String traceId, SessionState state, IntentResult intent) {
         // 合并历史槽位与本轮槽位（共享口味/健康诉求等；mealTime 会在拆分时按餐次覆盖）
         SlotBundle mergedSlots = slotMergeService.merge(state.slots(), intent.slots());
+        NutritionConstraints mergedConstraints = NutritionConstraints.merge(
+                state.nutritionConstraints(), intent.nutritionConstraints());
         List<String> planMealTimes = mealPlanService.resolveMealTimes(mergedSlots);
         // 规划态 slots 显式写入目标餐次，便于后续轮次与 Trace 观察
         SlotBundle planSlots = new SlotBundle(
@@ -354,10 +385,14 @@ public class DietOrchestratorService {
                 "PLAN_CONTEXT_RESOLVED",
                 "PLAN",
                 intent,
-                traceMap("mergedSlots", mergedSlots, "planMealTimes", planMealTimes, "planSlots", planSlots)
+                traceMap("mergedSlots", mergedSlots, "nutritionConstraints", mergedConstraints,
+                        "planMealTimes", planMealTimes, "planSlots", planSlots)
         );
 
-        SessionState workingState = state.withIntent(Intent.MEAL_PLAN).withSlots(planSlots).withPhase(SessionPhase.PLAN);
+        SessionState workingState = state.withIntent(Intent.MEAL_PLAN)
+                .withSlots(planSlots)
+                .withNutritionConstraints(mergedConstraints)
+                .withPhase(SessionPhase.PLAN);
         return completePlan(sessionId, userId, userInput, traceId, workingState, planMealTimes);
     }
 
@@ -371,7 +406,7 @@ public class DietOrchestratorService {
                                       SessionState state,
                                       List<String> planMealTimes) {
         List<MealPlanService.PlannedMeal> plannedMeals = mealPlanService.planMeals(
-                state.sourceMode(), userId, state.slots(), planMealTimes);
+                state.sourceMode(), userId, state.slots(), state.nutritionConstraints(), planMealTimes);
 
         List<Map<String, Object>> planTrace = new ArrayList<>();
         for (MealPlanService.PlannedMeal planned : plannedMeals) {
@@ -385,13 +420,16 @@ public class DietOrchestratorService {
         agentTraceService.recordEvent(
                 "MEAL_PLAN_SEARCHED",
                 "PLAN",
-                Map.of("planMealTimes", planMealTimes, "slots", state.slots()),
+                Map.of("planMealTimes", planMealTimes, "slots", state.slots(),
+                        "nutritionConstraints", state.nutritionConstraints()),
                 Map.of("plannedCount", plannedMeals.size(), "plannedMeals", planTrace)
         );
 
         boolean anyMatched = plannedMeals.stream().anyMatch(MealPlanService.PlannedMeal::matched);
         if (!anyMatched) {
-            ResponseResult empty = ResponseResult.textOnly(state.sourceMode() == SourceMode.PERSONAL
+            ResponseResult empty = ResponseResult.textOnly(!state.nutritionConstraints().isEmpty()
+                    ? "当前餐食库没有同时满足你的营养或过敏原限制的多餐方案。你可以放宽一项限制，或补充带营养数据的餐食。"
+                    : state.sourceMode() == SourceMode.PERSONAL
                     ? "你当前的个人餐食库里暂时拼不出多餐方案，可以补充更多饭堂菜，或者切换到公共餐食数据试试。"
                     : "公共餐食库里暂时拼不出完整的多餐方案，你可以补充口味、菜系，或换个人模式再试。");
             agentTraceService.recordEvent("NO_MEAL_PLAN_MATCHED", "PLAN", state, empty);
@@ -399,7 +437,7 @@ public class DietOrchestratorService {
         }
 
         RecommendResponseAgentService.Result merged = planResponseAgentService.planAndRespond(
-                sessionId, userInput, state.sourceMode(), state.slots(), plannedMeals);
+                sessionId, userInput, state.sourceMode(), state.slots(), state.nutritionConstraints(), plannedMeals);
 
         RecommendResult recommend = merged.recommend();
         agentTraceService.recordEvent(
@@ -463,25 +501,34 @@ public class DietOrchestratorService {
      */
     private ChatResponse completeRecommendation(String sessionId, Long userId, String userInput, String traceId, SessionState state, List<Long> excludeMealIds) {
         // 构造检索请求：sourceMode + userId + 当前 slots + excludeMealIds（检索层暂不使用 exclude，在 Rank 层过滤）
-        List<MealItem> candidates = mealSearchService.search(new MealSearchRequest(state.sourceMode(), userId, state.slots(), excludeMealIds));
+        List<MealItem> candidates = mealSearchService.search(new MealSearchRequest(
+                state.sourceMode(), userId, state.slots(), state.nutritionConstraints(), excludeMealIds));
         // Trace 事件：MEAL_SEARCHED | 阶段 SEARCH | 输入=slots | 输出=候选数量+candidates 列表
-        agentTraceService.recordEvent("MEAL_SEARCHED", "SEARCH", state.slots(), Map.of("candidateCount", candidates.size(), "candidates", candidates));
+        agentTraceService.recordEvent(
+                "MEAL_SEARCHED",
+                "SEARCH",
+                traceMap("slots", state.slots(), "nutritionConstraints", state.nutritionConstraints()),
+                Map.of("candidateCount", candidates.size(), "candidates", candidates)
+        );
 
         // 构造排序请求：候选列表 + slots + excludeMealIds，返回 top10
-        MealRankResult rankResult = mealRankService.rank(new MealRankRequest(candidates, state.slots(), userId, excludeMealIds));
+        MealRankResult rankResult = mealRankService.rank(new MealRankRequest(
+                candidates, state.slots(), userId, state.nutritionConstraints(), excludeMealIds));
         List<MealItem> ranked = rankResult.meals();
         // Trace 事件：MEAL_RANKED | 阶段 RANK | 输入=excludeMealIds | 输出=重排后数量+ranked 列表
         agentTraceService.recordEvent(
                 "MEAL_RANKED",
                 "RANK",
-                Map.of("excludeMealIds", excludeMealIds),
+                traceMap("excludeMealIds", excludeMealIds, "nutritionConstraints", state.nutritionConstraints()),
                 Map.of("rankedCount", ranked.size(), "ranked", ranked, "scores", rankResult.scores())
         );
 
         // 结果为空时，按 sourceMode 返回不同的空库提示文案
         if (ranked.isEmpty()) {
             // PERSONAL 模式提示补充饭堂菜或切 PUBLIC；PUBLIC 模式提示补充槽位
-            ResponseResult empty = ResponseResult.textOnly(state.sourceMode() == SourceMode.PERSONAL
+            ResponseResult empty = ResponseResult.textOnly(!state.nutritionConstraints().isEmpty()
+                    ? "当前餐食库没有同时满足你的营养或过敏原限制的结果。你可以放宽热量或营养素限制，或者补充带营养数据的餐食。"
+                    : state.sourceMode() == SourceMode.PERSONAL
                     ? "你当前的个人餐食库里暂时没有匹配的餐食，可以补充更多饭堂菜，或者切换到公共餐食数据试试。"
                     : "公共餐食库里暂时没有很匹配的结果，你可以切换个人模式补充餐次、口味或想吃的菜系。");
             // Trace 事件：NO_MEAL_MATCHED | 阶段 RECOMMEND | 输入=state | 输出=空结果提示文案
@@ -492,7 +539,7 @@ public class DietOrchestratorService {
 
         // 调用 RecommendResponseAgent：top3 候选 + 用户原文 + slots → 推荐理由 + speechText + 卡片
         RecommendResponseAgentService.Result merged = recommendResponseAgentService.recommendAndRespond(
-                sessionId, userInput, state.sourceMode(), state.slots(), ranked);
+                sessionId, userInput, state.sourceMode(), state.slots(), state.nutritionConstraints(), ranked);
 
         // 从结果中取出 RecommendResult（含 recommendations 列表和 needDisclaimer 标记）
         RecommendResult recommend = merged.recommend();

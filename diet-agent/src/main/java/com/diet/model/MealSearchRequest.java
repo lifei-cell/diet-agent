@@ -21,6 +21,8 @@ public class MealSearchRequest {
     private Long userId;
     /** 用于 MySQL JSON_OVERLAPS 的标准槽位。 */
     private SlotBundle slots;
+    /** 必须满足的营养与过敏原限制。 */
+    private NutritionConstraints nutritionConstraints;
     /** 需要从结果中排除的上一轮推荐餐食。 */
     private List<Long> excludeMealIds;
 }

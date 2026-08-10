@@ -5,6 +5,8 @@ import com.diet.mapper.MealMapper;
 import com.diet.model.MealItem;
 import com.diet.model.MealItemRow;
 import com.diet.model.MealRequest;
+import com.diet.model.NutritionConstraints;
+import com.diet.model.NutritionInfo;
 import com.diet.model.SlotBundle;
 import com.diet.enums.SourceMode;
 import com.diet.service.slot.SlotOptionService;
@@ -90,18 +92,26 @@ public class MealService {
      * 按槽位标签检索餐食并计算初排 matchScore。
      * 由 MealSearchService#search 调用；MySQL JSON_OVERLAPS 召回后 Java 侧 overlap 打分。
      */
-    public List<MealItem> search(SourceMode sourceMode, Long userId, SlotBundle slots) {
+    public List<MealItem> search(SourceMode sourceMode, Long userId, SlotBundle slots, NutritionConstraints nutritionConstraints) {
+        NutritionConstraints safeConstraints = NutritionConstraints.sanitize(nutritionConstraints);
+        SlotBundle safeSlots = slots == null ? SlotBundle.empty() : slots;
         // MyBatis 执行 JSON_OVERLAPS 检索，7 维槽位各传 JSON 数组，最多拉 SEARCH_LIMIT=50 条
         List<MealItemRow> rows = mealMapper.search(
                 sourceMode,                                      // PERSONAL 或 PUBLIC，决定查哪张数据
                 userId,                                          // PERSONAL 时过滤 owner_user_id
-                jsonService.toJsonArray(slots.mealTime()),       // 餐次标签 JSON 数组
-                jsonService.toJsonArray(slots.mood()),           // 心情标签 JSON 数组
-                jsonService.toJsonArray(slots.scene()),          // 场景标签 JSON 数组
-                jsonService.toJsonArray(slots.healthGoal()),     // 健康目标 JSON 数组
-                jsonService.toJsonArray(slots.cuisine()),        // 菜系 JSON 数组
-                jsonService.toJsonArray(slots.taste()),          // 口味 JSON 数组
-                jsonService.toJsonArray(slots.convenience()),    // 便捷性 JSON 数组
+                jsonService.toJsonArray(safeSlots.mealTime()),       // 餐次标签 JSON 数组
+                jsonService.toJsonArray(safeSlots.mood()),           // 心情标签 JSON 数组
+                jsonService.toJsonArray(safeSlots.scene()),          // 场景标签 JSON 数组
+                jsonService.toJsonArray(safeSlots.healthGoal()),     // 健康目标 JSON 数组
+                jsonService.toJsonArray(safeSlots.cuisine()),        // 菜系 JSON 数组
+                jsonService.toJsonArray(safeSlots.taste()),          // 口味 JSON 数组
+                jsonService.toJsonArray(safeSlots.convenience()),    // 便捷性 JSON 数组
+                safeConstraints.maxEnergyKcal(),
+                safeConstraints.minProteinG(),
+                safeConstraints.maxFatG(),
+                safeConstraints.maxCarbohydrateG(),
+                safeConstraints.maxSodiumMg(),
+                jsonService.toJsonArray(safeConstraints.excludedAllergens()),
                 SEARCH_LIMIT                                     // DB 层最多返回 50 行
         );
         // Row → MealItem
@@ -117,6 +127,7 @@ public class MealService {
             throw new DietException("餐次至少选择一个标签");
         }
         slotOptionService.validate(slots);
+        validateNutrition(request.nutrition());
     }
 
     private MealItemRow toRow(Long id, SourceMode sourceMode, Long ownerUserId, MealRequest request) {
@@ -133,6 +144,15 @@ public class MealService {
         row.setCuisine(jsonService.toJsonArray(slots.cuisine()));
         row.setTaste(jsonService.toJsonArray(slots.taste()));
         row.setConvenience(jsonService.toJsonArray(slots.convenience()));
+        NutritionInfo nutrition = normalizeNutrition(request.nutrition());
+        row.setEnergyKcal(nutrition.energyKcal());
+        row.setProteinG(nutrition.proteinG());
+        row.setFatG(nutrition.fatG());
+        row.setCarbohydrateG(nutrition.carbohydrateG());
+        row.setFiberG(nutrition.fiberG());
+        row.setSodiumMg(nutrition.sodiumMg());
+        row.setAllergens(jsonService.toJsonArray(nutrition.allergens()));
+        row.setNutritionSource(nutrition.nutritionSource());
         return row;
     }
 
@@ -149,13 +169,65 @@ public class MealService {
                 jsonService.fromJsonArray(row.getTaste()),
                 jsonService.fromJsonArray(row.getConvenience())
         );
+        NutritionInfo nutrition = new NutritionInfo(
+                row.getEnergyKcal(),
+                row.getProteinG(),
+                row.getFatG(),
+                row.getCarbohydrateG(),
+                row.getFiberG(),
+                row.getSodiumMg(),
+                jsonService.fromJsonArray(row.getAllergens()),
+                row.getNutritionSource()
+        );
         return new MealItem(
                 row.getId(),
                 SourceMode.valueOf(row.getSourceType()),
                 row.getOwnerUserId(),
                 row.getName(),
                 slots,
+                nutrition,
                 0
+        );
+    }
+
+    private void validateNutrition(NutritionInfo nutrition) {
+        NutritionInfo safe = nutrition == null ? NutritionInfo.empty() : nutrition;
+        validateNonNegative(safe.energyKcal(), "热量");
+        validateNonNegative(safe.proteinG(), "蛋白质");
+        validateNonNegative(safe.fatG(), "脂肪");
+        validateNonNegative(safe.carbohydrateG(), "碳水化合物");
+        validateNonNegative(safe.fiberG(), "膳食纤维");
+        validateNonNegative(safe.sodiumMg(), "钠");
+        if (safe.nutritionSource() != null && safe.nutritionSource().trim().length() > 64) {
+            throw new DietException("营养数据来源不能超过 64 个字符");
+        }
+    }
+
+    private void validateNonNegative(Double value, String label) {
+        if (value != null && (!Double.isFinite(value) || value < 0)) {
+            throw new DietException(label + "必须是非负数");
+        }
+    }
+
+    private NutritionInfo normalizeNutrition(NutritionInfo nutrition) {
+        NutritionInfo safe = nutrition == null ? NutritionInfo.empty() : nutrition;
+        List<String> allergens = safe.allergens() == null ? List.of() : safe.allergens().stream()
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::trim)
+                .distinct()
+                .toList();
+        String source = safe.nutritionSource() == null || safe.nutritionSource().isBlank()
+                ? null
+                : safe.nutritionSource().trim();
+        return new NutritionInfo(
+                safe.energyKcal(),
+                safe.proteinG(),
+                safe.fatG(),
+                safe.carbohydrateG(),
+                safe.fiberG(),
+                safe.sodiumMg(),
+                allergens,
+                source
         );
     }
 }

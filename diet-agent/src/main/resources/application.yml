@@ -6,9 +6,9 @@ spring:
   application:
     name: harness-agent
   datasource:
-    url: jdbc:mysql://localhost:3306/diet_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
-    username: root
-    password: ${DB_PASSWORD:123456}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/diet_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD:123456}}
     driver-class-name: com.mysql.cj.jdbc.Driver
   sql:
     init:
@@ -23,7 +23,7 @@ server:
   port: 8080
 agentscope:
   dashscope:
-    api-key: ${DASHSCOPE_API_KEY}
+    api-key: ${DASHSCOPE_API_KEY:}
 diet:
   llm:
     main-model: qwen3-max

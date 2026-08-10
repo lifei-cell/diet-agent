@@ -23,6 +23,7 @@ public class MealRequest {
     private List<String> cuisine;
     private List<String> taste;
     private List<String> convenience;
+    private NutritionInfo nutrition;
 
     public SlotBundle toSlots() {
         return new SlotBundle(mealTime, mood, scene, healthGoal, cuisine, taste, convenience);

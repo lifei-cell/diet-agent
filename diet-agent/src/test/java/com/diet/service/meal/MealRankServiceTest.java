@@ -7,6 +7,8 @@ import com.diet.model.MealFeedbackScoreRow;
 import com.diet.model.MealItem;
 import com.diet.model.MealRankRequest;
 import com.diet.model.MealRankResult;
+import com.diet.model.NutritionConstraints;
+import com.diet.model.NutritionInfo;
 import com.diet.model.SlotBundle;
 import com.diet.model.UserSlotPreferenceRow;
 import com.diet.service.preference.UserPreferenceService;
@@ -51,7 +53,7 @@ class MealRankServiceTest {
                 .thenReturn(List.of());
 
         MealRankResult result = mealRankService.rank(new MealRankRequest(
-                List.of(spicyMeal(), lightMeal()), querySlots(), 1L, List.of()));
+                List.of(spicyMeal(), lightMeal()), querySlots(), 1L, NutritionConstraints.empty(), List.of()));
 
         assertEquals(2L, result.meals().getFirst().id());
         assertTrue(result.scores().getFirst().preferenceScore() > result.scores().get(1).preferenceScore());
@@ -67,10 +69,26 @@ class MealRankServiceTest {
                 .thenReturn(List.of(feedbackScore));
 
         MealRankResult result = mealRankService.rank(new MealRankRequest(
-                List.of(spicyMeal(), lightMeal()), querySlots(), 1L, List.of()));
+                List.of(spicyMeal(), lightMeal()), querySlots(), 1L, NutritionConstraints.empty(), List.of()));
 
         assertEquals(1L, result.meals().getFirst().id());
         assertTrue(result.scores().getFirst().feedbackScore() > result.scores().get(1).feedbackScore());
+    }
+
+    @Test
+    void shouldPromoteMealWithMoreComfortableNutritionMarginAfterHardFiltering() {
+        NutritionConstraints constraints = new NutritionConstraints(600.0, 30.0, null, null, null, List.of());
+        MealItem nearEnergyLimit = nutritionMeal(1L, "接近热量上限餐", 580.0, 30.0);
+        MealItem lowerEnergyMeal = nutritionMeal(2L, "低热量高蛋白餐", 350.0, 30.0);
+        when(userPreferenceMapper.findSlotPreferences(1L)).thenReturn(List.of());
+        when(feedbackMapper.findMealFeedbackScores(ArgumentMatchers.eq(1L), ArgumentMatchers.anyList()))
+                .thenReturn(List.of());
+
+        MealRankResult result = mealRankService.rank(new MealRankRequest(
+                List.of(nearEnergyLimit, lowerEnergyMeal), querySlots(), 1L, constraints, List.of()));
+
+        assertEquals(2L, result.meals().getFirst().id());
+        assertTrue(result.scores().getFirst().nutritionScore() > result.scores().get(1).nutritionScore());
     }
 
     private MealItem spicyMeal() {
@@ -85,5 +103,17 @@ class MealRankServiceTest {
 
     private SlotBundle querySlots() {
         return new SlotBundle(List.of("午餐"), List.of(), List.of(), List.of("高蛋白"), List.of(), List.of(), List.of());
+    }
+
+    private MealItem nutritionMeal(Long id, String name, Double energyKcal, Double proteinG) {
+        return new MealItem(
+                id,
+                SourceMode.PUBLIC,
+                null,
+                name,
+                querySlots(),
+                new NutritionInfo(energyKcal, proteinG, 8.0, 35.0, 6.0, 500.0, List.of(), "TEST"),
+                0
+        );
     }
 }

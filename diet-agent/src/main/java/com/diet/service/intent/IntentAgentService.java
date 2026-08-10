@@ -4,6 +4,7 @@ import com.diet.agent.factory.AgentFactory;
 import com.diet.model.ConversationTurn;
 import com.diet.enums.Intent;
 import com.diet.model.IntentResult;
+import com.diet.model.NutritionConstraints;
 import com.diet.model.SlotBundle;
 import com.diet.service.slot.SlotOptionService;
 import com.diet.service.trace.AgentTraceService;
@@ -58,7 +59,14 @@ public class IntentAgentService {
      * 调用 IntentAgent 识别本轮意图和槽位。
      * 由 Orchestrator#handleTurn 调用，返回 IntentResult 供路由和槽位合并。
      */
-    public IntentResult recognize(String sessionId, Long userId, String userInput, SlotBundle knownSlots, List<ConversationTurn> recentHistory) {
+    public IntentResult recognize(
+            String sessionId,
+            Long userId,
+            String userInput,
+            SlotBundle knownSlots,
+            NutritionConstraints knownNutritionConstraints,
+            List<ConversationTurn> recentHistory
+    ) {
         try {
             // 加载全部槽位字段的合法候选值 Map（mealTime/mood/scene 等 → 标签列表） ：把槽位字典传入prompt
             Map<String, List<String>> slotOptions = slotOptionService.findAllOptions();
@@ -69,7 +77,7 @@ public class IntentAgentService {
             agent.getMemory().clear();
             // 调用 Agent：内部走 agentTraceService.callAgent，记录 AGENT_CALL 事件（含 input/output/latency）
             Msg response = agentTraceService.callAgent(sessionId, "IntentAgent", modelName,
-                    agent, buildUserPrompt(userId, sessionId, userInput, knownSlots, recentHistory, slotOptions));
+                    agent, buildUserPrompt(userId, sessionId, userInput, knownSlots, knownNutritionConstraints, recentHistory, slotOptions));
             // 解析 Agent 返回的 JSON 文本为 IntentResult（intent + slots + confidence）
             return parseResult(response.getTextContent(), userInput, slotOptions);
         } catch (Exception ignored) {
@@ -79,17 +87,28 @@ public class IntentAgentService {
     }
 
     /** 构造传给 IntentAgent 的用户 prompt，包含上下文和输出格式约束。 */
-    private String buildUserPrompt(Long userId, String sessionId, String userInput, SlotBundle knownSlots, List<ConversationTurn> recentHistory, Map<String, List<String>> slotOptions) {
+    private String buildUserPrompt(
+            Long userId,
+            String sessionId,
+            String userInput,
+            SlotBundle knownSlots,
+            NutritionConstraints knownNutritionConstraints,
+            List<ConversationTurn> recentHistory,
+            Map<String, List<String>> slotOptions
+    ) {
         return """
                 userId: %s
                 sessionId: %s
                 recentHistory: %s
                 knownSlots: %s
+                knownNutritionConstraints: %s
                 slotOptions: %s
                 当前这一句: %s
-                请输出 JSON，字段为 intent、slots、confidence。
+                请输出 JSON，字段为 intent、slots、nutritionConstraints、confidence。
                 slots 必须从 slotOptions 对应字段的候选值中选择；无法映射则输出 null 或空数组，不要创造标签。
-                """.formatted(userId, sessionId, recentHistory, knownSlots, slotOptions, userInput);
+                nutritionConstraints 只提取用户明确表达的数值上限/下限或过敏原排除项；不确定时置 null 或空数组。
+                """.formatted(userId, sessionId, recentHistory, knownSlots,
+                NutritionConstraints.sanitize(knownNutritionConstraints), slotOptions, userInput);
     }
 
     /** 将 Agent 返回的 JSON 文本解析为 IntentResult。 */
@@ -105,12 +124,13 @@ public class IntentAgentService {
 
         // 将 JSON slots 各字段映射为 SlotBundle，并过滤非法字典值
         SlotBundle slots = parseSlots(slotsNode, slotOptions);
+        NutritionConstraints nutritionConstraints = parseNutritionConstraints(root, userInput);
 
         // 读取 confidence 字段，缺省 0.5
         double confidence = root.path("confidence").asDouble(0.5);
 
         // 组装并返回 IntentResult
-        return new IntentResult(intent, slots, confidence);
+        return new IntentResult(intent, slots, nutritionConstraints, confidence);
     }
 
     /** 将 JSON 中的 intent 字符串解析为 Intent 枚举。 */
@@ -140,9 +160,10 @@ public class IntentAgentService {
     /** LLM 完全失败时的保守兜底 IntentResult，confidence 固定 0.2。 */
     private IntentResult fallback(String userInput) {
         return new IntentResult(
-                fallbackIntent(userInput),                                                          // 关键词推断意图
-                SlotBundle.empty(),                                                                 // 槽位置空
-                0.2                                                                                 // 低置信度
+                fallbackIntent(userInput),
+                SlotBundle.empty(),
+                fallbackNutritionConstraints(userInput),
+                0.2
         );
     }
 
@@ -177,5 +198,84 @@ public class IntentAgentService {
             }
         }
         return false;
+    }
+
+    /** 解析 LLM 输出中的 nutritionConstraints，兼容 constraints 别名。 */
+    private NutritionConstraints parseNutritionConstraints(JsonNode root, String userInput) {
+        JsonNode node = root.path("nutritionConstraints").isObject()
+                ? root.path("nutritionConstraints")
+                : root.path("constraints");
+        NutritionConstraints llmConstraints = new NutritionConstraints(
+                nonNegative(node.path("maxEnergyKcal")),
+                nonNegative(node.path("minProteinG")),
+                nonNegative(node.path("maxFatG")),
+                nonNegative(node.path("maxCarbohydrateG")),
+                nonNegative(node.path("maxSodiumMg")),
+                stringList(node.path("excludedAllergens"))
+        );
+        return NutritionConstraints.merge(llmConstraints, fallbackNutritionConstraints(userInput));
+    }
+
+    /** LLM 不稳定时，识别常见的热量、蛋白质和过敏原表达。 */
+    private NutritionConstraints fallbackNutritionConstraints(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return NutritionConstraints.empty();
+        }
+        String compact = userInput.replaceAll("\\s+", "");
+        Double maxEnergy = matchNumber(compact, "(?:不超过|最多|小于等于|≤)(\\d+(?:\\.\\d+)?)(?:kcal|千卡|大卡|卡)");
+        Double minProtein = matchNumber(compact, "(?:蛋白质|蛋白)(?:至少|不少于|大于等于|≥)(\\d+(?:\\.\\d+)?)(?:g|克)");
+        if (minProtein == null) {
+            minProtein = matchNumber(compact, "(?:至少|不少于|大于等于|≥)(\\d+(?:\\.\\d+)?)(?:g|克)(?:蛋白质|蛋白)");
+        }
+        List<String> allergens = java.util.stream.Stream.of("花生", "乳制品", "鸡蛋", "坚果", "海鲜", "麸质", "大豆")
+                .filter(allergen -> compact.contains("不吃" + allergen)
+                        || compact.contains("不要" + allergen)
+                        || compact.contains("不含" + allergen)
+                        || compact.contains("避免" + allergen)
+                        || compact.contains(allergen + "过敏"))
+                .toList();
+        return new NutritionConstraints(maxEnergy, minProtein, null, null, null, allergens);
+    }
+
+    private Double nonNegative(JsonNode node) {
+        if (node == null || !node.isNumber()) {
+            return null;
+        }
+        double value = node.asDouble();
+        return Double.isFinite(value) && value >= 0 ? value : null;
+    }
+
+    private List<String> stringList(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return List.of();
+        }
+        if (node.isTextual()) {
+            return java.util.Arrays.stream(node.asText().split("[,，、]"))
+                    .map(String::trim)
+                    .filter(value -> !value.isBlank())
+                    .toList();
+        }
+        if (!node.isArray()) {
+            return List.of();
+        }
+        return java.util.stream.StreamSupport.stream(node.spliterator(), false)
+                .filter(JsonNode::isTextual)
+                .map(JsonNode::asText)
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .toList();
+    }
+
+    private Double matchNumber(String text, String regex) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(regex, java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(text);
+        if (!matcher.find()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(matcher.group(1));
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 }

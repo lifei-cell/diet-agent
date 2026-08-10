@@ -4,6 +4,8 @@ import com.diet.model.MealItem;
 import com.diet.model.MealRankRequest;
 import com.diet.model.MealRankResult;
 import com.diet.model.MealRankScore;
+import com.diet.model.NutritionConstraints;
+import com.diet.model.NutritionInfo;
 import com.diet.model.SlotBundle;
 import com.diet.service.preference.UserPreferenceService;
 import org.springframework.stereotype.Service;
@@ -22,9 +24,10 @@ import java.util.Set;
 @Service
 public class MealRankService {
 
-    private static final double CONTEXT_WEIGHT = 0.70;
+    private static final double CONTEXT_WEIGHT = 0.60;
     private static final double PREFERENCE_WEIGHT = 0.20;
     private static final double FEEDBACK_WEIGHT = 0.10;
+    private static final double NUTRITION_WEIGHT = 0.10;
     private static final double NEUTRAL_SCORE = 0.50;
     private static final double MAX_RAW_PERSONAL_SCORE = 10.0;
 
@@ -54,7 +57,8 @@ public class MealRankService {
         Map<Long, Double> mealFeedbackScores = userPreferenceService.mealFeedbackScores(
                 request.userId(), candidates.stream().map(MealItem::id).filter(java.util.Objects::nonNull).toList());
         List<ScoredMeal> scoredMeals = candidates.stream()
-                .map(item -> score(item, request.slots(), slotPreferenceScores, mealFeedbackScores))
+                .map(item -> score(item, request.slots(), request.nutritionConstraints(),
+                        slotPreferenceScores, mealFeedbackScores))
                 .sorted(Comparator.comparingDouble((ScoredMeal item) -> item.score().finalScore()).reversed())
                 .limit(10)
                 .toList();
@@ -68,6 +72,7 @@ public class MealRankService {
                     scored.meal().ownerUserId(),
                     scored.meal().name(),
                     scored.meal().slots(),
+                    scored.meal().nutrition(),
                     scored.score().finalScore()
             ));
             details.add(scored.score());
@@ -78,19 +83,22 @@ public class MealRankService {
     private ScoredMeal score(
             MealItem item,
             SlotBundle query,
+            NutritionConstraints nutritionConstraints,
             Map<String, Double> slotPreferenceScores,
             Map<Long, Double> mealFeedbackScores
     ) {
         double contextScore = slotScore(item.slots(), query);
         double preferenceScore = preferenceScore(item.slots(), slotPreferenceScores);
         double feedbackScore = normalizePersonalScore(mealFeedbackScores.get(item.id()));
+        double nutritionScore = nutritionScore(item.nutrition(), nutritionConstraints);
         double finalScore = clamp(
                 CONTEXT_WEIGHT * contextScore
                         + PREFERENCE_WEIGHT * preferenceScore
                         + FEEDBACK_WEIGHT * feedbackScore
+                        + NUTRITION_WEIGHT * nutritionScore
         );
         return new ScoredMeal(item, new MealRankScore(
-                item.id(), item.name(), contextScore, preferenceScore, feedbackScore, finalScore));
+                item.id(), item.name(), contextScore, preferenceScore, feedbackScore, nutritionScore, finalScore));
     }
 
     /**
@@ -115,6 +123,52 @@ public class MealRankService {
         }
         return clamp((Math.max(-MAX_RAW_PERSONAL_SCORE, Math.min(MAX_RAW_PERSONAL_SCORE, rawScore))
                 + MAX_RAW_PERSONAL_SCORE) / (2 * MAX_RAW_PERSONAL_SCORE));
+    }
+
+    /**
+     * 所有候选已经由 SQL 硬过滤；这里按营养富余程度进行二次区分。
+     * 没有营养约束时使用中性分，以保持历史排序行为。
+     */
+    private double nutritionScore(NutritionInfo nutrition, NutritionConstraints constraints) {
+        NutritionConstraints safeConstraints = NutritionConstraints.sanitize(constraints);
+        if (safeConstraints.isEmpty()) {
+            return NEUTRAL_SCORE;
+        }
+        NutritionInfo safeNutrition = nutrition == null ? NutritionInfo.empty() : nutrition;
+        List<Double> scores = new ArrayList<>();
+        appendMaxScore(scores, safeNutrition.energyKcal(), safeConstraints.maxEnergyKcal());
+        appendMinScore(scores, safeNutrition.proteinG(), safeConstraints.minProteinG());
+        appendMaxScore(scores, safeNutrition.fatG(), safeConstraints.maxFatG());
+        appendMaxScore(scores, safeNutrition.carbohydrateG(), safeConstraints.maxCarbohydrateG());
+        appendMaxScore(scores, safeNutrition.sodiumMg(), safeConstraints.maxSodiumMg());
+        if (!safeConstraints.excludedAllergens().isEmpty()) {
+            scores.add(1.0);
+        }
+        return scores.isEmpty() ? 0.0 : scores.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+    }
+
+    /** 数值越低越好，但仍保留硬阈值内的最小基础分。 */
+    private void appendMaxScore(List<Double> target, Double value, Double max) {
+        if (max == null) {
+            return;
+        }
+        if (value == null || max <= 0) {
+            target.add(0.0);
+            return;
+        }
+        target.add(clamp(1.0 - 0.25 * Math.min(1.0, value / max)));
+    }
+
+    /** 达到最低营养目标后，超额部分获得适度加分。 */
+    private void appendMinScore(List<Double> target, Double value, Double min) {
+        if (min == null) {
+            return;
+        }
+        if (value == null || min <= 0) {
+            target.add(0.0);
+            return;
+        }
+        target.add(clamp(0.75 + 0.25 * Math.min(1.0, Math.max(0.0, value / min - 1.0))));
     }
 
     /** 计算餐食 slots 与查询 slots 的 7 维平均重叠比例。 */

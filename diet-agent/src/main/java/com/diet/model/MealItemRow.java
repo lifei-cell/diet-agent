@@ -17,6 +17,14 @@ public class MealItemRow {
     private String cuisine;
     private String taste;
     private String convenience;
+    private Double energyKcal;
+    private Double proteinG;
+    private Double fatG;
+    private Double carbohydrateG;
+    private Double fiberG;
+    private Double sodiumMg;
+    private String allergens;
+    private String nutritionSource;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }
