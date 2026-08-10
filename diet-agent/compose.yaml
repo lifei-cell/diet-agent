@@ -32,6 +32,8 @@ services:
       SPRING_DATASOURCE_USERNAME: diet_app
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-diet-agent-dev-password}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-diet-agent-development-jwt-secret-change-before-production-2026}
+      JWT_EXPIRATION_SECONDS: ${JWT_EXPIRATION_SECONDS:-86400}
       DIET_LLM_MAIN_MODEL: ${DIET_LLM_MAIN_MODEL:-qwen3-max}
       DIET_LLM_LIGHT_MODEL: ${DIET_LLM_LIGHT_MODEL:-qwen3-max}
     ports:

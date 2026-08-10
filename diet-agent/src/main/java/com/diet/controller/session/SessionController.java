@@ -1,10 +1,10 @@
 package com.diet.controller.session;
 
-import com.diet.constants.DietConstants;
 import com.diet.model.CreateSessionResponse;
+import com.diet.security.CurrentUser;
 import com.diet.service.session.SessionService;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -18,7 +18,7 @@ public class SessionController {
     }
 
     @PostMapping
-    public CreateSessionResponse create(@RequestHeader(value = DietConstants.USER_ID, defaultValue = "1") Long userId) {
-        return new CreateSessionResponse(sessionService.createSession(userId));
+    public CreateSessionResponse create(Authentication authentication) {
+        return new CreateSessionResponse(sessionService.createSession(CurrentUser.require(authentication).id()));
     }
 }

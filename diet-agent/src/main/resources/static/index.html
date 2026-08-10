@@ -24,16 +24,37 @@
             <a href="#/admin/traces" data-nav="/admin/traces">Trace</a>
             <a href="#/admin/evaluations" data-nav="/admin/evaluations">评估</a>
         </nav>
-        <label class="user-field">
-            <span>用户 ID</span>
-            <input id="userIdInput" type="number" min="1" value="1">
-        </label>
+        <div class="user-field">
+            <span id="authUserLabel">未登录</span>
+            <button id="logoutButton" class="button ghost small" type="button" hidden>退出</button>
+        </div>
     </header>
 
     <main id="app" class="page" tabindex="-1"></main>
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<div id="authPanel" class="auth-panel" aria-modal="true" role="dialog" aria-labelledby="authTitle">
+    <section class="auth-card">
+        <span class="eyebrow">饮食推荐助手</span>
+        <h1 id="authTitle">登录后开始使用</h1>
+        <p>你的会话、个人餐食、反馈与 Trace 将按账号独立保存。</p>
+        <form id="loginForm" class="stack-form">
+            <label>用户名<input name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
+            <label>密码<input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="72"></label>
+            <button class="button primary" type="submit">登录</button>
+            <button id="showRegisterButton" class="button ghost" type="button">注册新账号</button>
+        </form>
+        <form id="registerForm" class="stack-form" hidden>
+            <label>用户名<input name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
+            <label>昵称（可选）<input name="displayName" autocomplete="nickname" maxlength="64"></label>
+            <label>密码<input name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+            <button class="button primary" type="submit">注册并登录</button>
+            <button id="showLoginButton" class="button ghost" type="button">返回登录</button>
+        </form>
+    </section>
+</div>
 
 <script src="./assets/js/api.js"></script>
 <script src="./assets/js/app.js"></script>

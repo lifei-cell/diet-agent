@@ -1,12 +1,12 @@
 package com.diet.controller.chat;
 
-import com.diet.constants.DietConstants;
 import com.diet.model.ChatRequest;
 import com.diet.model.ChatResponse;
+import com.diet.security.CurrentUser;
 import com.diet.service.orchestrator.DietOrchestratorService;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -32,12 +32,11 @@ public class DietChatController {
      */
     @PostMapping("/chat")
     public ChatResponse dietChat(
-            // 从请求头 X-User-Id 读取用户 ID，缺省为 1 便于本地调试
-            @RequestHeader(value = DietConstants.USER_ID, defaultValue = "1") Long userId,
+            Authentication authentication,
             // 从请求体反序列化 ChatRequest（sessionId、message、sourceMode）
             @RequestBody ChatRequest request
     ) {
-        // 委托 Orchestrator 执行完整状态机，直接返回 ChatResponse
-        return orchestratorService.dietChat(userId, request);
+        // 用户身份仅来自已验证的 JWT，不能由客户端请求头伪造。
+        return orchestratorService.dietChat(CurrentUser.require(authentication).id(), request);
     }
 }

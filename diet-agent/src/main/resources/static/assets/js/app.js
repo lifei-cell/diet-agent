@@ -2,7 +2,12 @@
     "use strict";
     const app = document.getElementById("app");
     const toast = document.getElementById("toast");
-    const userIdInput = document.getElementById("userIdInput");
+    const authUserLabel = document.getElementById("authUserLabel");
+    const logoutButton = document.getElementById("logoutButton");
+    const authPanel = document.getElementById("authPanel");
+    const authTitle = document.getElementById("authTitle");
+    const loginForm = document.getElementById("loginForm");
+    const registerForm = document.getElementById("registerForm");
     const SLOT_LABELS = {
         mealTime: "用餐时间",
         mood: "心情状态",
@@ -136,6 +141,10 @@
         });
     }
     function render() {
+        if (!DietApi.isAuthenticated()) {
+            openAuthPanel("login");
+            return;
+        }
         const route = currentRoute();
         setActiveNav(route);
         if (route === "/diet") {
@@ -171,7 +180,7 @@
                 <aside class="grid stats">
                     ${statCard("个人餐食", state.home.loaded ? state.home.personalCount : "加载中", "你的私有餐食库，用于个性化推荐")}
                     ${statCard("公共餐食", state.home.loaded ? state.home.publicCount : "加载中", "系统预置餐食，适合快速体验")}
-                    ${statCard("当前用户", DietApi.getUserId(), "所有请求会带上 X-User-Id")}
+                    ${statCard("当前用户", DietApi.getCurrentUser().displayName || DietApi.getCurrentUser().username, "数据将按当前登录账号隔离")}
                 </aside>
             </section>
             <section class="grid three" style="margin-top: 18px;">
@@ -1046,27 +1055,95 @@
             runEvaluation(form);
         }
     }
-    function initUserField() {
-        userIdInput.value = DietApi.setUserId(DietApi.getUserId());
-        userIdInput.addEventListener("change", () => {
-            DietApi.setUserId(userIdInput.value);
-            state.home.loaded = false;
-            state.personalMeals = [];
-            state.publicMeals = [];
-            state.traces.rows = [];
-            state.traces.selected = null;
-            resetChat();
-            showToast("用户 ID 已切换");
-            render();
+    function resetUserScopedState() {
+        state.home = { loaded: false, personalCount: 0, publicCount: 0 };
+        state.personalMeals = [];
+        state.publicMeals = [];
+        state.editingMeal = null;
+        state.slotOptions = null;
+        state.traces.rows = [];
+        state.traces.selected = null;
+        state.traces.filters = defaultTraceFilters();
+        state.evaluation.report = null;
+        state.evaluation.form = defaultRangeForm();
+        state.chat.sessionId = null;
+        state.chat.sending = false;
+        state.chat.messages = [{
+            role: "assistant",
+            text: "你好，我可以根据你的个人餐食库或公共餐食库推荐今天吃什么。可以试试问我：今晚想吃清淡一点，有什么推荐？"
+        }];
+    }
+    function updateAuthUi() {
+        const user = DietApi.getCurrentUser();
+        authUserLabel.textContent = user ? (user.displayName || user.username) : "未登录";
+        logoutButton.hidden = !user;
+    }
+    function setAuthMode(mode) {
+        const registering = mode === "register";
+        loginForm.hidden = registering;
+        registerForm.hidden = !registering;
+        authTitle.textContent = registering ? "创建你的账号" : "登录后开始使用";
+    }
+    function openAuthPanel(mode) {
+        setAuthMode(mode || "login");
+        authPanel.classList.add("is-open");
+    }
+    function closeAuthPanel() {
+        authPanel.classList.remove("is-open");
+    }
+    async function submitAuthentication(event, mode) {
+        event.preventDefault();
+        const form = event.target;
+        if (!form.checkValidity()) {
+            form.reportValidity();
+            return;
+        }
+        const payload = Object.fromEntries(new FormData(form).entries());
+        try {
+            await (mode === "register" ? DietApi.register(payload) : DietApi.login(payload));
+            form.reset();
+            resetUserScopedState();
+            updateAuthUi();
+            closeAuthPanel();
+            showToast(mode === "register" ? "注册成功，已自动登录" : "登录成功");
+            if (!location.hash) {
+                navigate("/diet");
+            } else {
+                render();
+            }
+        } catch (error) {
+            showToast(error.message || "登录失败", "error");
+        }
+    }
+    function initAuthentication() {
+        loginForm.addEventListener("submit", (event) => submitAuthentication(event, "login"));
+        registerForm.addEventListener("submit", (event) => submitAuthentication(event, "register"));
+        document.getElementById("showRegisterButton").addEventListener("click", () => setAuthMode("register"));
+        document.getElementById("showLoginButton").addEventListener("click", () => setAuthMode("login"));
+        logoutButton.addEventListener("click", () => {
+            DietApi.logout();
+            resetUserScopedState();
+            updateAuthUi();
+            openAuthPanel("login");
+            showToast("已退出登录");
         });
+        window.addEventListener("diet:unauthorized", () => {
+            resetUserScopedState();
+            updateAuthUi();
+            openAuthPanel("login");
+        });
+        updateAuthUi();
+        if (!DietApi.isAuthenticated()) {
+            openAuthPanel("login");
+        }
     }
     window.addEventListener("hashchange", render);
     app.addEventListener("click", handleClick);
     app.addEventListener("submit", handleSubmit);
-    initUserField();
-    if (!location.hash) {
+    initAuthentication();
+    if (!location.hash && DietApi.isAuthenticated()) {
         navigate("/diet");
-    } else {
+    } else if (DietApi.isAuthenticated()) {
         render();
     }
 })();

@@ -55,6 +55,9 @@ public class SessionService {
     /** 确保 sessionId 对应行存在，不存在则插入空会话。 */
     public void ensureSession(String sessionId, Long userId) {
         if (sessionMapper.findById(sessionId, userId) == null) {
+            if (sessionMapper.findByIdAnyUser(sessionId) != null) {
+                throw new IllegalArgumentException("会话不存在或无访问权限");
+            }
             SessionRow row = new SessionRow();
             row.setId(sessionId);
             row.setUserId(userId);

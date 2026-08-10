@@ -3,6 +3,7 @@ package com.diet.service.feedback;
 import com.diet.exception.DietException;
 import com.diet.enums.FeedbackAction;
 import com.diet.mapper.FeedbackMapper;
+import com.diet.mapper.SessionMapper;
 import com.diet.model.FeedbackRequest;
 import com.diet.model.MealItem;
 import com.diet.service.meal.MealService;
@@ -13,15 +14,18 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class FeedbackService {
     private final FeedbackMapper feedbackMapper;
+    private final SessionMapper sessionMapper;
     private final MealService mealService;
     private final UserPreferenceService userPreferenceService;
 
     public FeedbackService(
             FeedbackMapper feedbackMapper,
+            SessionMapper sessionMapper,
             MealService mealService,
             UserPreferenceService userPreferenceService
     ) {
         this.feedbackMapper = feedbackMapper;
+        this.sessionMapper = sessionMapper;
         this.mealService = mealService;
         this.userPreferenceService = userPreferenceService;
     }
@@ -30,6 +34,9 @@ public class FeedbackService {
     public void save(Long userId, FeedbackRequest request) {
         if (request == null || request.sessionId() == null || request.sessionId().isBlank()) {
             throw new DietException("反馈 sessionId 不能为空");
+        }
+        if (sessionMapper.findById(request.sessionId(), userId) == null) {
+            throw new DietException("会话不存在或无权限反馈");
         }
         FeedbackAction action = FeedbackAction.from(request.action());
         if (action == FeedbackAction.RATING && request.rating() == null) {

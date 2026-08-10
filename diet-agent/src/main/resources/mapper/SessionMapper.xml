@@ -45,6 +45,19 @@
         AND user_id = #{userId}
     </select>
 
+    <select id="findByIdAnyUser" resultMap="SessionRowMap">
+        SELECT id,
+        user_id,
+        phase,
+        slots,
+        last_recommendations,
+        created_at,
+        updated_at
+        FROM diet_sessions
+        WHERE id = #{sessionId}
+        LIMIT 1
+    </select>
+
     <update id="update" parameterType="com.diet.model.SessionRow">
         UPDATE diet_sessions
         SET phase = #{phase},

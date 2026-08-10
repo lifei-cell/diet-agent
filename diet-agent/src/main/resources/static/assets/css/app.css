@@ -137,6 +137,65 @@ button {
     background: #fff;
 }
 
+.user-field .button {
+    padding: 7px 12px;
+}
+
+.auth-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: none;
+    place-items: center;
+    padding: 20px;
+    background: rgba(15, 43, 32, 0.42);
+    backdrop-filter: blur(8px);
+}
+
+.auth-panel.is-open {
+    display: grid;
+}
+
+.auth-card {
+    width: min(420px, 100%);
+    padding: 32px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: #fff;
+    box-shadow: var(--shadow);
+}
+
+.auth-card h1 {
+    margin: 8px 0 10px;
+    font-size: 30px;
+}
+
+.auth-card p {
+    margin: 0 0 22px;
+    color: var(--muted);
+    line-height: 1.65;
+}
+
+.stack-form {
+    display: grid;
+    gap: 14px;
+}
+
+.stack-form label {
+    display: grid;
+    gap: 7px;
+    color: var(--muted);
+    font-size: 14px;
+}
+
+.stack-form input {
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+}
+
 .page {
     padding-top: 28px;
 }
