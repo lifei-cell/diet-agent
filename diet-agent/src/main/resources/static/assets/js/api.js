@@ -122,6 +122,8 @@
         register: (payload) => authRequest("/register", payload),
         login: (payload) => authRequest("/login", payload),
         logout,
+        getProfile: () => request("/profile"),
+        updateProfile: (payload) => request("/profile", { method: "PUT", body: payload }),
         createSession: () => request("/sessions", { method: "POST" }),
         chat: (payload) => request("/chat", { method: "POST", body: payload }),
         listPersonalMeals: () => request("/meals/personal"),

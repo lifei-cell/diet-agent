@@ -13,6 +13,7 @@ import com.diet.model.MealItem;
 import com.diet.model.MealRankRequest;
 import com.diet.model.MealRankResult;
 import com.diet.model.NutritionConstraints;
+import com.diet.model.NutritionTarget;
 import com.diet.model.MealSearchRequest;
 import com.diet.model.ChatRequest;
 import com.diet.model.ChatResponse;
@@ -28,6 +29,7 @@ import com.diet.service.meal.MealSearchService;
 import com.diet.service.meal.MealService;
 import com.diet.service.plan.MealPlanService;
 import com.diet.service.plan.PlanResponseAgentService;
+import com.diet.service.profile.UserHealthProfileService;
 import com.diet.service.recommend.RecommendResponseAgentService;
 import com.diet.service.session.SessionService;
 import com.diet.service.session.SessionStateService;
@@ -116,6 +118,11 @@ public class DietOrchestratorService {
     private final MealService mealService;
 
     /**
+     * 用户健康档案服务，用于给应答 Agent 提供当天营养目标背景。
+     */
+    private final UserHealthProfileService userHealthProfileService;
+
+    /**
      * 健康风险守卫，拦截医疗承诺/极端节食等高风险表述。
      */
     private final RiskGuardService riskGuardService;
@@ -146,6 +153,7 @@ public class DietOrchestratorService {
             MealPlanService mealPlanService,
             PlanResponseAgentService planResponseAgentService,
             MealService mealService,
+            UserHealthProfileService userHealthProfileService,
             RiskGuardService riskGuardService,
             AgentTraceService agentTraceService
     ) {
@@ -161,6 +169,7 @@ public class DietOrchestratorService {
         this.mealPlanService = mealPlanService;                         // 注入多餐规划服务
         this.planResponseAgentService = planResponseAgentService;       // 注入规划应答 Agent 服务
         this.mealService = mealService;                                 // 注入餐食服务
+        this.userHealthProfileService = userHealthProfileService;       // 注入用户健康档案服务
         this.riskGuardService = riskGuardService;             // 注入健康守卫
         this.agentTraceService = agentTraceService;                     // 注入链路追踪服务
     }
@@ -436,8 +445,10 @@ public class DietOrchestratorService {
             return completeTextOnly(sessionId, traceId, state, Intent.MEAL_PLAN, empty);
         }
 
+        NutritionTarget personalizedNutritionTarget = userHealthProfileService.findNutritionTarget(userId);
         RecommendResponseAgentService.Result merged = planResponseAgentService.planAndRespond(
-                sessionId, userInput, state.sourceMode(), state.slots(), state.nutritionConstraints(), plannedMeals);
+                sessionId, userInput, state.sourceMode(), state.slots(), state.nutritionConstraints(),
+                personalizedNutritionTarget, plannedMeals);
 
         RecommendResult recommend = merged.recommend();
         agentTraceService.recordEvent(
@@ -538,8 +549,10 @@ public class DietOrchestratorService {
         }
 
         // 调用 RecommendResponseAgent：top3 候选 + 用户原文 + slots → 推荐理由 + speechText + 卡片
+        NutritionTarget personalizedNutritionTarget = userHealthProfileService.findNutritionTarget(userId);
         RecommendResponseAgentService.Result merged = recommendResponseAgentService.recommendAndRespond(
-                sessionId, userInput, state.sourceMode(), state.slots(), state.nutritionConstraints(), ranked);
+                sessionId, userInput, state.sourceMode(), state.slots(), state.nutritionConstraints(),
+                personalizedNutritionTarget, ranked);
 
         // 从结果中取出 RecommendResult（含 recommendations 列表和 needDisclaimer 标记）
         RecommendResult recommend = merged.recommend();

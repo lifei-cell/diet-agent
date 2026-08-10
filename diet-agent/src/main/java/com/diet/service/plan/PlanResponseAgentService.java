@@ -49,6 +49,7 @@ public class PlanResponseAgentService {
             SourceMode sourceMode,
             SlotBundle sharedSlots,
             NutritionConstraints nutritionConstraints,
+            NutritionTarget personalizedNutritionTarget,
             List<MealPlanService.PlannedMeal> plannedMeals
     ) {
         List<MealPlanService.PlannedMeal> safePlans = plannedMeals == null ? List.of() : plannedMeals;
@@ -71,7 +72,7 @@ public class PlanResponseAgentService {
                     "PlanResponseAgent",
                     modelName,
                     agent,
-                    buildUserPrompt(userInput, sourceMode, sharedSlots, nutritionConstraints, safePlans)
+                    buildUserPrompt(userInput, sourceMode, sharedSlots, nutritionConstraints, personalizedNutritionTarget, safePlans)
             );
             ParsedOutput parsed = parseOutput(response.getTextContent(), safePlans, sharedSlots);
             RecommendResult recommend = new RecommendResult(parsed.options(), needDisclaimer);
@@ -91,6 +92,7 @@ public class PlanResponseAgentService {
             SourceMode sourceMode,
             SlotBundle sharedSlots,
             NutritionConstraints nutritionConstraints,
+            NutritionTarget personalizedNutritionTarget,
             List<MealPlanService.PlannedMeal> plannedMeals
     ) {
         StringBuilder mealSection = new StringBuilder();
@@ -111,10 +113,11 @@ public class PlanResponseAgentService {
                 数据源模式：%s
                 共享槽位：%s
                 营养硬约束：%s
+                个人每日营养目标（仅作整日规划背景，不是单餐硬约束）：%s
                 各餐次候选：%s
                 请输出 JSON，包含 mealPlans 数组（每项 mealTime + mealId + reason）和 speechText；mealId 必须来自对应餐次候选。
-                只可引用候选中已有的营养数据，不要杜撰数值。
-                """.formatted(userInput, sourceMode, sharedSlots, NutritionConstraints.sanitize(nutritionConstraints), mealSection);
+                只可引用候选中已有的营养数据，不要杜撰数值，也不能将单餐宣称为达到整日目标。
+                """.formatted(userInput, sourceMode, sharedSlots, NutritionConstraints.sanitize(nutritionConstraints), personalizedNutritionTarget, mealSection);
     }
 
     private ParsedOutput parseOutput(String content, List<MealPlanService.PlannedMeal> plannedMeals, SlotBundle sharedSlots) {

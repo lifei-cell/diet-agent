@@ -34,6 +34,23 @@ CREATE TABLE IF NOT EXISTS `diet_user`  (
 ) ENGINE = InnoDB AUTO_INCREMENT = 2 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
+-- Table structure for user_health_profile
+-- One authenticated user owns one health profile.
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `user_health_profile`  (
+  `user_id` bigint NOT NULL,
+  `height_cm` decimal(6,2) NOT NULL,
+  `weight_kg` decimal(6,2) NOT NULL,
+  `age` int NOT NULL,
+  `activity_level` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `disease_history` json NOT NULL,
+  `profile_goal` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`user_id`) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
 -- Table structure for diet_messages
 -- ----------------------------
 CREATE TABLE IF NOT EXISTS `diet_messages`  (

@@ -27,6 +27,7 @@
     ];
     const state = {
         home: { loaded: false, personalCount: 0, publicCount: 0 },
+        profile: { loaded: false, loading: false, data: null },
         slotOptions: null,
         personalMeals: [],
         publicMeals: [],
@@ -149,6 +150,8 @@
         setActiveNav(route);
         if (route === "/diet") {
             renderHome();
+        } else if (route === "/diet/profile") {
+            renderProfile();
         } else if (route === "/diet/chat") {
             renderChat();
         } else if (route === "/diet/meals/personal") {
@@ -172,6 +175,7 @@
                     <h1>用更轻松的方式决定今天吃什么</h1>
                     <p>维护你的个人餐食库，也可以从公共餐食库开始。助手会根据时间、心情、场景、健康目标、口味和便利程度给出推荐，并在信息不足时主动追问。</p>
                     <div class="hero-actions">
+                        <a class="btn soft" href="#/diet/profile">完善健康档案</a>
                         <a class="btn primary" href="#/diet/chat">开始聊天推荐</a>
                         <a class="btn soft" href="#/diet/meals/personal">管理个人餐食</a>
                         <a class="btn ghost" href="#/admin/traces">查看 Trace</a>
@@ -184,6 +188,7 @@
                 </aside>
             </section>
             <section class="grid three" style="margin-top: 18px;">
+                ${featureCard("健康档案", "填写身高、体重、年龄、运动频率和目标，生成每日营养参考。", "#/diet/profile")}
                 ${featureCard("聊天推荐", "按自然语言表达需求，页面会展示澄清问题、推荐卡片和反馈入口。", "#/diet/chat")}
                 ${featureCard("餐食维护", "用标签多选维护自己的常吃餐食，后续推荐会优先从个人库检索。", "#/diet/meals/personal")}
                 ${featureCard("评测后台", "查看请求 Trace，标注预期结果，并生成批量评估报告。", "#/admin/evaluations")}
@@ -432,6 +437,154 @@
                 </select>
             </div>
         `;
+    }
+    async function renderProfile() {
+        if (!state.profile.loaded) {
+            app.innerHTML = `<section class="section"><div class="empty">正在加载你的健康档案...</div></section>`;
+            await ensureProfile();
+            if (currentRoute() !== "/diet/profile") {
+                return;
+            }
+        }
+        const profile = state.profile.data || { configured: false, diseaseHistory: [] };
+        const target = profile.nutritionTarget;
+        app.innerHTML = `
+            <section class="split">
+                <div class="section">
+                    <div class="card-title">
+                        <div>
+                            <h2>我的健康档案</h2>
+                            <p>用于估算日常能量和三大营养素目标，并作为推荐助手的整日饮食背景。</p>
+                        </div>
+                        <span class="badge">${profile.configured ? "已生成目标" : "待完善"}</span>
+                    </div>
+                    ${renderProfileForm(profile)}
+                </div>
+                <aside class="section">
+                    ${renderNutritionTarget(target, profile.medicalDisclaimer)}
+                </aside>
+            </section>
+        `;
+    }
+    function renderProfileForm(profile) {
+        const activityLevel = profile.activityLevel || "MODERATE";
+        const profileGoal = profile.profileGoal || "MAINTAIN";
+        return `
+            <form id="profileForm" class="form-grid">
+                <div class="field">
+                    <label for="heightCm">身高（cm）</label>
+                    <input id="heightCm" type="number" name="heightCm" min="80" max="250" step="0.1" value="${escapeHtml(profile.heightCm || "")}" required>
+                </div>
+                <div class="field">
+                    <label for="weightKg">体重（kg）</label>
+                    <input id="weightKg" type="number" name="weightKg" min="25" max="500" step="0.1" value="${escapeHtml(profile.weightKg || "")}" required>
+                </div>
+                <div class="field">
+                    <label for="profileAge">年龄</label>
+                    <input id="profileAge" type="number" name="age" min="14" max="120" step="1" value="${escapeHtml(profile.age || "")}" required>
+                </div>
+                <div class="field">
+                    <label for="activityLevel">运动频率</label>
+                    <select id="activityLevel" name="activityLevel" required>
+                        ${profileSelectOption("SEDENTARY", "久坐（几乎不运动）", activityLevel)}
+                        ${profileSelectOption("LIGHT", "轻度（每周 1–3 次）", activityLevel)}
+                        ${profileSelectOption("MODERATE", "中等（每周 3–5 次）", activityLevel)}
+                        ${profileSelectOption("HIGH", "较高（每周 6–7 次）", activityLevel)}
+                        ${profileSelectOption("ATHLETE", "高强度 / 体力劳动", activityLevel)}
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="profileGoal">健康目标</label>
+                    <select id="profileGoal" name="profileGoal" required>
+                        ${profileSelectOption("FAT_LOSS", "减脂", profileGoal)}
+                        ${profileSelectOption("MAINTAIN", "维持体重", profileGoal)}
+                        ${profileSelectOption("MUSCLE_GAIN", "增肌", profileGoal)}
+                    </select>
+                </div>
+                <div class="field full">
+                    <label for="diseaseHistory">疾病史（可选）</label>
+                    <input id="diseaseHistory" name="diseaseHistory" value="${escapeHtml((profile.diseaseHistory || []).join("，"))}" placeholder="例如：高血压，糖尿病；多个项目用逗号分隔">
+                    <span>仅用于提示医疗风险；涉及疾病、用药或特殊人群，请以医生或注册营养师建议为准。</span>
+                </div>
+                <div class="field full">
+                    <button class="btn primary" type="submit">${profile.configured ? "更新并重新计算" : "生成个性化营养目标"}</button>
+                </div>
+            </form>
+        `;
+    }
+    function profileSelectOption(value, label, selectedValue) {
+        return `<option value="${value}" ${value === selectedValue ? "selected" : ""}>${label}</option>`;
+    }
+    function renderNutritionTarget(target, disclaimer) {
+        if (!target) {
+            return `
+                <div class="card-title"><div><h3>每日营养目标</h3><p>完善左侧档案后自动生成。</p></div></div>
+                <div class="empty">这里会展示每日能量、蛋白质、脂肪和碳水化合物参考。</div>
+                <p class="muted">${escapeHtml(disclaimer || "该结果仅用于日常饮食参考。")}</p>
+            `;
+        }
+        return `
+            <div class="card-title"><div><h3>每日营养目标</h3><p>按当前档案估算的日常起始参考。</p></div></div>
+            <div class="grid two nutrition-target-grid">
+                ${nutritionTargetMetric("目标能量", `${formatNutritionValue(target.dailyEnergyKcal)} kcal`)}
+                ${nutritionTargetMetric("维持能量", `${formatNutritionValue(target.maintenanceEnergyKcal)} kcal`)}
+                ${nutritionTargetMetric("蛋白质", `${formatNutritionValue(target.dailyProteinG)} g`)}
+                ${nutritionTargetMetric("脂肪", `${formatNutritionValue(target.dailyFatG)} g`)}
+                ${nutritionTargetMetric("碳水化合物", `${formatNutritionValue(target.dailyCarbohydrateG)} g`)}
+            </div>
+            <div class="subtle-divider"></div>
+            <p class="muted">${escapeHtml(target.calculationNote || "")}</p>
+            <p class="muted">${escapeHtml(disclaimer || "该结果仅用于日常饮食参考。")}</p>
+        `;
+    }
+    function nutritionTargetMetric(label, value) {
+        return `<div class="stat-card nutrition-target-metric"><span class="muted">${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+    }
+    function formatNutritionValue(value) {
+        const numeric = Number(value);
+        return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
+    }
+    async function ensureProfile(force) {
+        if (!force && state.profile.loaded) {
+            return state.profile.data;
+        }
+        if (state.profile.loading) {
+            return state.profile.data;
+        }
+        state.profile.loading = true;
+        try {
+            state.profile.data = await DietApi.getProfile();
+            state.profile.loaded = true;
+            return state.profile.data;
+        } catch (error) {
+            showToast(error.message || "健康档案加载失败", "error");
+            return null;
+        } finally {
+            state.profile.loading = false;
+        }
+    }
+    async function saveProfile(form) {
+        const formData = new FormData(form);
+        const diseaseHistory = String(formData.get("diseaseHistory") || "")
+            .split(/[,，、]/)
+            .map((value) => value.trim())
+            .filter(Boolean);
+        const payload = {
+            heightCm: Number(formData.get("heightCm")),
+            weightKg: Number(formData.get("weightKg")),
+            age: Number(formData.get("age")),
+            activityLevel: String(formData.get("activityLevel") || ""),
+            diseaseHistory,
+            profileGoal: String(formData.get("profileGoal") || "")
+        };
+        const restore = setLoading(form.querySelector("button[type=submit]"), "计算中...");
+        try {
+            state.profile.data = await guard(() => DietApi.updateProfile(payload), "营养目标已更新");
+            state.profile.loaded = true;
+            renderProfile();
+        } finally {
+            restore();
+        }
     }
     function renderNutritionFields(nutrition) {
         const data = nutrition || {};
@@ -1037,6 +1190,13 @@
         if (form.id === "chatForm") {
             event.preventDefault();
             submitChat(form);
+        } else if (form.id === "profileForm") {
+            event.preventDefault();
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+            saveProfile(form);
         } else if (form.id === "mealForm") {
             event.preventDefault();
             if (!form.checkValidity()) {
@@ -1057,6 +1217,7 @@
     }
     function resetUserScopedState() {
         state.home = { loaded: false, personalCount: 0, publicCount: 0 };
+        state.profile = { loaded: false, loading: false, data: null };
         state.personalMeals = [];
         state.publicMeals = [];
         state.editingMeal = null;

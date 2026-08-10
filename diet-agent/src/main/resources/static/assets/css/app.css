@@ -314,6 +314,18 @@ button {
     font-size: 30px;
 }
 
+.nutrition-target-grid {
+    gap: 12px;
+}
+
+.nutrition-target-metric {
+    padding: 14px;
+}
+
+.nutrition-target-metric strong {
+    font-size: 22px;
+}
+
 .btn {
     display: inline-flex;
     min-height: 40px;

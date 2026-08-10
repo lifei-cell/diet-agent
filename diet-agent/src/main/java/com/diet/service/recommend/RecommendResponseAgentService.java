@@ -5,6 +5,7 @@ import com.diet.enums.SourceMode;
 import com.diet.model.MealItem;
 import com.diet.model.MealResponse;
 import com.diet.model.NutritionConstraints;
+import com.diet.model.NutritionTarget;
 import com.diet.model.RecommendResult;
 import com.diet.model.RecommendedMealOption;
 import com.diet.model.ResponseResult;
@@ -74,6 +75,7 @@ public class RecommendResponseAgentService {
             SourceMode sourceMode,
             SlotBundle slots,
             NutritionConstraints nutritionConstraints,
+            NutritionTarget personalizedNutritionTarget,
             List<MealItem> rankedMeals) {
         // 取重排结果 top3 作为 LLM 输入候选（不允许编造候选之外的餐食）
         List<MealItem> topMeals = rankedMeals == null ? List.of() : rankedMeals.stream().limit(3).toList();
@@ -97,7 +99,7 @@ public class RecommendResponseAgentService {
                     "RecommendResponseAgent",
                     modelName,
                     agent,
-                    buildUserPrompt(userInput, sourceMode, slots, nutritionConstraints, topMeals)
+                    buildUserPrompt(userInput, sourceMode, slots, nutritionConstraints, personalizedNutritionTarget, topMeals)
             );
             // 解析 Agent JSON 输出为 recommendations + speechText
             ParsedOutput parsed = parseOutput(response.getTextContent(), topMeals, slots);
@@ -124,6 +126,7 @@ public class RecommendResponseAgentService {
             SourceMode sourceMode,
             SlotBundle slots,
             NutritionConstraints nutritionConstraints,
+            NutritionTarget personalizedNutritionTarget,
             List<MealItem> topMeals
     ) {
         return """
@@ -131,10 +134,11 @@ public class RecommendResponseAgentService {
                 数据源模式：%s
                 本轮槽位：%s
                 营养硬约束：%s
+                个人每日营养目标（仅作整日饮食背景，不是单餐硬约束）：%s
                 候选餐食：%s
                 请输出 JSON，包含 recommendations 数组（每项 mealId + reason）和 speechText，不要编造候选之外的餐食。
-                候选已通过硬约束过滤；理由可引用候选中已有的营养数据，不能杜撰数值。
-                """.formatted(userInput, sourceMode, slots, NutritionConstraints.sanitize(nutritionConstraints), topMeals);
+                候选已通过硬约束过滤；理由可引用候选中已有的营养数据，不能杜撰数值，也不能声称单餐达到整日目标。
+                """.formatted(userInput, sourceMode, slots, NutritionConstraints.sanitize(nutritionConstraints), personalizedNutritionTarget, topMeals);
     }
 
     /**
