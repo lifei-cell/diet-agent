@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.diet.mapper.UserPreferenceMapper">
+
+    <resultMap id="UserSlotPreferenceRowMap" type="com.diet.model.UserSlotPreferenceRow">
+        <result property="slotName" column="slot_name"/>
+        <result property="optionValue" column="option_value"/>
+        <result property="preferenceScore" column="preference_score"/>
+    </resultMap>
+
+    <select id="findSlotPreferences" resultMap="UserSlotPreferenceRowMap">
+        SELECT slot_name, option_value, preference_score
+        FROM user_slot_preference
+        WHERE user_id = #{userId}
+    </select>
+
+    <insert id="upsertSlotPreference">
+        INSERT INTO user_slot_preference (
+            user_id, slot_name, option_value, preference_score,
+            positive_count, negative_count, updated_at
+        ) VALUES (
+            #{userId}, #{slotName}, #{optionValue}, #{delta},
+            #{positiveIncrement}, #{negativeIncrement}, NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            preference_score = LEAST(10.0, GREATEST(-10.0, preference_score + VALUES(preference_score))),
+            positive_count = positive_count + VALUES(positive_count),
+            negative_count = negative_count + VALUES(negative_count),
+            updated_at = NOW()
+    </insert>
+</mapper>
