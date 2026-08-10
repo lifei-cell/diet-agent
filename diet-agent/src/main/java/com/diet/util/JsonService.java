@@ -36,6 +36,22 @@ public class JsonService {
             throw new DietException("JSON 解析失败", e);
         }
     }
+
+    public String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new DietException("JSON 序列化失败", e);
+        }
+    }
+
+    public <T> T fromJson(String json, TypeReference<T> typeReference) {
+        try {
+            return objectMapper.readValue(json, typeReference);
+        } catch (Exception e) {
+            throw new DietException("JSON 解析失败", e);
+        }
+    }
 }
 
 

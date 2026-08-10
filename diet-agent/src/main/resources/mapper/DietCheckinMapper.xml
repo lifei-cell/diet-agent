@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.diet.mapper.DietCheckinMapper">
+
+    <resultMap id="CheckinDraftMap" type="com.diet.model.CheckinDraftRow">
+        <id property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="imageObjectKey" column="image_object_key"/>
+        <result property="imageMediaType" column="image_media_type"/>
+        <result property="recognizedItems" column="recognized_items"/>
+        <result property="automated" column="automated"/>
+        <result property="message" column="message"/>
+        <result property="createdAt" column="created_at"/>
+    </resultMap>
+
+    <resultMap id="DietCheckinMap" type="com.diet.model.DietCheckinRow">
+        <id property="id" column="id"/>
+        <result property="userId" column="user_id"/>
+        <result property="checkinDate" column="checkin_date"/>
+        <result property="mealTime" column="meal_time"/>
+        <result property="imageObjectKey" column="image_object_key"/>
+        <result property="imageMediaType" column="image_media_type"/>
+        <result property="totalEnergyKcal" column="total_energy_kcal"/>
+        <result property="totalProteinG" column="total_protein_g"/>
+        <result property="totalFatG" column="total_fat_g"/>
+        <result property="totalCarbohydrateG" column="total_carbohydrate_g"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <resultMap id="DietCheckinItemMap" type="com.diet.model.DietCheckinItemRow">
+        <id property="id" column="id"/>
+        <result property="checkinId" column="checkin_id"/>
+        <result property="foodName" column="food_name"/>
+        <result property="estimatedWeightG" column="estimated_weight_g"/>
+        <result property="energyKcal" column="energy_kcal"/>
+        <result property="proteinG" column="protein_g"/>
+        <result property="fatG" column="fat_g"/>
+        <result property="carbohydrateG" column="carbohydrate_g"/>
+        <result property="confidence" column="confidence"/>
+        <result property="nutritionSource" column="nutrition_source"/>
+    </resultMap>
+
+    <insert id="insertDraft" parameterType="com.diet.model.CheckinDraftRow">
+        INSERT INTO diet_checkin_draft (
+            id, user_id, image_object_key, image_media_type, recognized_items, automated, message, created_at
+        ) VALUES (
+            #{id}, #{userId}, #{imageObjectKey}, #{imageMediaType},
+            #{recognizedItems}, #{automated}, #{message}, NOW()
+        )
+    </insert>
+
+    <select id="findDraftByIdAndUserId" resultMap="CheckinDraftMap">
+        SELECT id, user_id, image_object_key, image_media_type, recognized_items, automated, message, created_at
+        FROM diet_checkin_draft
+        WHERE id = #{id} AND user_id = #{userId}
+    </select>
+
+    <delete id="deleteDraftByIdAndUserId">
+        DELETE FROM diet_checkin_draft
+        WHERE id = #{id} AND user_id = #{userId}
+    </delete>
+
+    <insert id="insertCheckin" parameterType="com.diet.model.DietCheckinRow" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO diet_checkin (
+            user_id, checkin_date, meal_time, image_object_key, image_media_type,
+            total_energy_kcal, total_protein_g, total_fat_g, total_carbohydrate_g, created_at, updated_at
+        ) VALUES (
+            #{userId}, #{checkinDate}, #{mealTime}, #{imageObjectKey}, #{imageMediaType},
+            #{totalEnergyKcal}, #{totalProteinG}, #{totalFatG}, #{totalCarbohydrateG}, NOW(), NOW()
+        )
+    </insert>
+
+    <insert id="insertCheckinItem" parameterType="com.diet.model.DietCheckinItemRow" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO diet_checkin_item (
+            checkin_id, food_name, estimated_weight_g, energy_kcal, protein_g, fat_g,
+            carbohydrate_g, confidence, nutrition_source
+        ) VALUES (
+            #{checkinId}, #{foodName}, #{estimatedWeightG}, #{energyKcal}, #{proteinG}, #{fatG},
+            #{carbohydrateG}, #{confidence}, #{nutritionSource}
+        )
+    </insert>
+
+    <select id="findCheckinsByUserAndDate" resultMap="DietCheckinMap">
+        SELECT id, user_id, checkin_date, meal_time, total_energy_kcal, total_protein_g,
+               total_fat_g, total_carbohydrate_g, created_at, updated_at
+        FROM diet_checkin
+        WHERE user_id = #{userId} AND checkin_date = #{checkinDate}
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findItemsByCheckinId" resultMap="DietCheckinItemMap">
+        SELECT id, checkin_id, food_name, estimated_weight_g, energy_kcal, protein_g, fat_g,
+               carbohydrate_g, confidence, nutrition_source
+        FROM diet_checkin_item
+        WHERE checkin_id = #{checkinId}
+        ORDER BY id ASC
+    </select>
+
+    <select id="findCheckinByIdAndUserId" resultMap="DietCheckinMap">
+        SELECT id, user_id, checkin_date, meal_time, image_object_key, image_media_type,
+               total_energy_kcal, total_protein_g, total_fat_g, total_carbohydrate_g, created_at, updated_at
+        FROM diet_checkin
+        WHERE id = #{id} AND user_id = #{userId}
+    </select>
+
+    <delete id="deleteCheckinByIdAndUserId">
+        DELETE FROM diet_checkin
+        WHERE id = #{id} AND user_id = #{userId}
+    </delete>
+
+    <delete id="deleteCheckinItemsByCheckinId">
+        DELETE FROM diet_checkin_item
+        WHERE checkin_id = #{checkinId}
+    </delete>
+</mapper>

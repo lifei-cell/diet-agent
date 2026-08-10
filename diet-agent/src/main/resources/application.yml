@@ -14,6 +14,10 @@ spring:
     init:
       mode: always
       schema-locations: classpath:db/diet_db.sql
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
 mybatis:
   mapper-locations: classpath:mapper/*.xml
   type-aliases-package: com.diet.model
@@ -33,6 +37,16 @@ diet:
   llm:
     main-model: qwen3-max
     light-model: qwen3-max
+  vision:
+    # 可通过 DIET_VISION_MODEL / DIET_VISION_API_URL 覆盖为所属地域和工作空间的多模态模型端点。
+    model: ${DIET_VISION_MODEL:qwen3.7-plus}
+    api-url: ${DIET_VISION_API_URL:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+  storage:
+    minio:
+      endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+      access-key: ${MINIO_ACCESS_KEY:diet-minio}
+      secret-key: ${MINIO_SECRET_KEY:diet-minio-change-me}
+      bucket: ${MINIO_BUCKET:diet-checkin-images}
   session:
     max-history-turns: 10
 logging:

@@ -51,6 +51,57 @@ CREATE TABLE IF NOT EXISTS `user_health_profile`  (
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
+-- Image-recognition results are drafts until the owner explicitly confirms a check-in.
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `diet_checkin_draft`  (
+  `id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` bigint NOT NULL,
+  `image_object_key` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `image_media_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `recognized_items` json NOT NULL,
+  `automated` tinyint NOT NULL DEFAULT 0,
+  `message` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `created_at` datetime NOT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_checkin_draft_user`(`user_id` ASC, `created_at` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
+-- Confirmed image-based food check-ins, scoped to the authenticated user.
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `diet_checkin`  (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `checkin_date` date NOT NULL,
+  `meal_time` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `image_object_key` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `image_media_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `total_energy_kcal` decimal(10,2) NOT NULL,
+  `total_protein_g` decimal(10,2) NOT NULL,
+  `total_fat_g` decimal(10,2) NOT NULL,
+  `total_carbohydrate_g` decimal(10,2) NOT NULL,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_checkin_user_date`(`user_id` ASC, `checkin_date` ASC, `created_at` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+
+CREATE TABLE IF NOT EXISTS `diet_checkin_item`  (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `checkin_id` bigint NOT NULL,
+  `food_name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `estimated_weight_g` decimal(10,2) NOT NULL,
+  `energy_kcal` decimal(10,2) NOT NULL,
+  `protein_g` decimal(10,2) NOT NULL,
+  `fat_g` decimal(10,2) NOT NULL,
+  `carbohydrate_g` decimal(10,2) NOT NULL,
+  `confidence` decimal(5,4) NOT NULL DEFAULT 0,
+  `nutrition_source` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_checkin_item_checkin`(`checkin_id` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
 -- Table structure for diet_messages
 -- ----------------------------
 CREATE TABLE IF NOT EXISTS `diet_messages`  (

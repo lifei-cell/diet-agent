@@ -79,6 +79,24 @@
         }
     }
 
+    async function requestBlob(path) {
+        const headers = new Headers();
+        const token = getToken();
+        if (token) {
+            headers.set("Authorization", `Bearer ${token}`);
+        }
+        const response = await fetch(`${API_BASE}${path}`, { headers });
+        if (!response.ok) {
+            const detail = await readError(response);
+            if (response.status === 401) {
+                logout();
+                window.dispatchEvent(new CustomEvent("diet:unauthorized"));
+            }
+            throw new Error(detail || `请求失败：${response.status}`);
+        }
+        return response.blob();
+    }
+
     async function authRequest(path, payload) {
         const response = await fetch(`${AUTH_BASE}${path}`, {
             method: "POST",
@@ -124,6 +142,15 @@
         logout,
         getProfile: () => request("/profile"),
         updateProfile: (payload) => request("/profile", { method: "PUT", body: payload }),
+        recognizeCheckinImage: (image) => {
+            const body = new FormData();
+            body.append("image", image);
+            return request("/checkins/recognitions", { method: "POST", body });
+        },
+        saveCheckin: (payload) => request("/checkins", { method: "POST", body: payload }),
+        getCheckinSummary: (date) => request(`/checkins${toQuery({ date })}`),
+        getCheckinImage: (checkinId) => requestBlob(`/checkins/${encodeURIComponent(checkinId)}/image`),
+        deleteCheckin: (checkinId) => request(`/checkins/${encodeURIComponent(checkinId)}`, { method: "DELETE" }),
         createSession: () => request("/sessions", { method: "POST" }),
         chat: (payload) => request("/chat", { method: "POST", body: payload }),
         listPersonalMeals: () => request("/meals/personal"),

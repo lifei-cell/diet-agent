@@ -326,6 +326,44 @@ button {
     font-size: 22px;
 }
 
+.checkin-image-preview {
+    display: block;
+    width: 100%;
+    max-height: 260px;
+    margin: 0 0 16px;
+    object-fit: cover;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+}
+
+.checkin-item-list {
+    gap: 12px;
+}
+
+.checkin-item-editor {
+    padding: 16px;
+}
+
+.checkin-history {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.checkin-history-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.checkin-history-item p {
+    margin: 4px 0;
+}
+
 .btn {
     display: inline-flex;
     min-height: 40px;

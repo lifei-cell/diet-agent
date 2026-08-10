@@ -28,6 +28,7 @@
     const state = {
         home: { loaded: false, personalCount: 0, publicCount: 0 },
         profile: { loaded: false, loading: false, data: null },
+        checkins: defaultCheckinState(),
         slotOptions: null,
         personalMeals: [],
         publicMeals: [],
@@ -152,6 +153,8 @@
             renderHome();
         } else if (route === "/diet/profile") {
             renderProfile();
+        } else if (route === "/diet/checkins") {
+            renderCheckins();
         } else if (route === "/diet/chat") {
             renderChat();
         } else if (route === "/diet/meals/personal") {
@@ -189,6 +192,7 @@
             </section>
             <section class="grid three" style="margin-top: 18px;">
                 ${featureCard("健康档案", "填写身高、体重、年龄、运动频率和目标，生成每日营养参考。", "#/diet/profile")}
+                ${featureCard("饮食打卡", "上传餐食图片，核对菜品与估算营养后记录当天摄入。", "#/diet/checkins")}
                 ${featureCard("聊天推荐", "按自然语言表达需求，页面会展示澄清问题、推荐卡片和反馈入口。", "#/diet/chat")}
                 ${featureCard("餐食维护", "用标签多选维护自己的常吃餐食，后续推荐会优先从个人库检索。", "#/diet/meals/personal")}
                 ${featureCard("评测后台", "查看请求 Trace，标注预期结果，并生成批量评估报告。", "#/admin/evaluations")}
@@ -586,6 +590,290 @@
             restore();
         }
     }
+    async function renderCheckins() {
+        if (!state.checkins.loaded) {
+            app.innerHTML = `<section class="section"><div class="empty">正在加载当天饮食打卡...</div></section>`;
+            await ensureCheckinSummary();
+            if (currentRoute() !== "/diet/checkins") {
+                return;
+            }
+        }
+        const summary = state.checkins.summary || emptyCheckinSummary();
+        app.innerHTML = `
+            <section class="split">
+                <div class="section">
+                    <div class="card-title">
+                        <div>
+                            <h2>图片饮食打卡</h2>
+                            <p>上传餐食图片后核对菜品、份量和营养估算；确认前不会写入当天摄入记录。</p>
+                        </div>
+                        <span class="badge">识别后需确认</span>
+                    </div>
+                    <form id="checkinImageForm" class="form-grid">
+                        <div class="field full">
+                            <label for="checkinImage">餐食图片</label>
+                            <input id="checkinImage" type="file" name="image" accept="image/jpeg,image/png,image/webp" required>
+                            <span>支持 JPG、PNG、WEBP，最大 5MB。油盐、酱料和实际份量难以从图片准确判断，请在下一步核对。</span>
+                        </div>
+                        <div class="field full">
+                            <button class="btn primary" type="submit" ${state.checkins.uploading ? "disabled" : ""}>${state.checkins.uploading ? "识别中..." : "上传并识别"}</button>
+                        </div>
+                    </form>
+                    ${renderRecognitionDraft(state.checkins.recognition)}
+                </div>
+                <aside class="section">
+                    ${renderCheckinSummary(summary)}
+                </aside>
+            </section>
+        `;
+    }
+    function emptyCheckinSummary() {
+        return {
+            date: state.checkins.date,
+            checkins: [],
+            consumed: { energyKcal: 0, proteinG: 0, fatG: 0, carbohydrateG: 0 },
+            nutritionTarget: null,
+            remaining: null,
+            message: "正在加载当天汇总。"
+        };
+    }
+    function renderRecognitionDraft(recognition) {
+        if (!recognition) {
+            return "";
+        }
+        const items = recognition.items || [];
+        const preview = state.checkins.previewUrl
+            ? `<img class="checkin-image-preview" src="${state.checkins.previewUrl}" alt="待识别的餐食图片">`
+            : "";
+        return `
+            <div class="subtle-divider"></div>
+            <div class="card-title">
+                <div>
+                    <h3>${recognition.automated ? "识别结果，请确认" : "请手动补充菜品"}</h3>
+                    <p>${escapeHtml(recognition.message || "请核对后确认打卡。")}</p>
+                </div>
+                <button class="btn soft" type="button" data-action="add-checkin-item">新增菜品</button>
+            </div>
+            ${preview}
+            <form id="checkinConfirmForm" class="form-grid">
+                <div class="field">
+                    <label>打卡日期</label>
+                    <input type="date" name="checkinDate" max="${dateInputValue(new Date())}" min="${dateInputValue(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))}" value="${escapeHtml(state.checkins.date)}" required>
+                </div>
+                <div class="field">
+                    <label>用餐时段</label>
+                    <select name="mealTime" required>
+                        <option value="早餐">早餐</option>
+                        <option value="午餐" selected>午餐</option>
+                        <option value="晚餐">晚餐</option>
+                        <option value="加餐">加餐</option>
+                    </select>
+                </div>
+                <input type="hidden" name="recognitionId" value="${escapeHtml(recognition.recognitionId)}">
+                <div class="field full">
+                    <span>每项营养均为单份估算。若图片识别不完整，请修正数值或添加菜品。</span>
+                </div>
+                <div class="field full checkin-item-list">
+                    ${items.length ? items.map((item, index) => renderCheckinItemEditor(item, index)).join("") : `<div class="empty">尚未识别到可靠菜品，点击“新增菜品”后手动填写。</div>`}
+                </div>
+                <div class="field full">
+                    <button class="btn primary" type="submit" ${items.length ? "" : "disabled"}>确认并保存打卡</button>
+                </div>
+            </form>
+        `;
+    }
+    function renderCheckinItemEditor(item, index) {
+        return `
+            <article class="card checkin-item-editor" data-checkin-item>
+                <div class="card-title">
+                    <div><h3>菜品 ${index + 1}</h3><p>${item.confidence === null || item.confidence === undefined ? "手动填写" : `识别置信度：${Math.round(Number(item.confidence) * 100)}%`}</p></div>
+                    <button class="btn ghost" type="button" data-action="remove-checkin-item" data-index="${index}">移除</button>
+                </div>
+                <div class="form-grid">
+                    <div class="field full"><label>菜品名称</label><input name="name" value="${escapeHtml(item.name || "")}" required></div>
+                    ${checkinNumberInput("estimatedWeightG", "估算份量（g）", item.estimatedWeightG, 0, 3000)}
+                    ${checkinNumberInput("energyKcal", "热量（kcal）", item.energyKcal, 0, 20000)}
+                    ${checkinNumberInput("proteinG", "蛋白质（g）", item.proteinG, 0, 2000)}
+                    ${checkinNumberInput("fatG", "脂肪（g）", item.fatG, 0, 2000)}
+                    ${checkinNumberInput("carbohydrateG", "碳水化合物（g）", item.carbohydrateG, 0, 3000)}
+                    <input type="hidden" name="confidence" value="${escapeHtml(item.confidence ?? 0)}">
+                    <input type="hidden" name="nutritionSource" value="${escapeHtml(item.nutritionSource || "USER_CONFIRMED")}">
+                </div>
+            </article>
+        `;
+    }
+    function checkinNumberInput(name, label, value, min, max) {
+        return `<div class="field"><label>${label}</label><input type="number" name="${name}" min="${min}" max="${max}" step="0.1" value="${escapeHtml(value ?? "")}" required></div>`;
+    }
+    function renderCheckinSummary(summary) {
+        const consumed = summary.consumed || emptyCheckinSummary().consumed;
+        const target = summary.nutritionTarget;
+        const remaining = summary.remaining;
+        return `
+            <div class="card-title">
+                <div><h3>当日摄入</h3><p>查看已打卡餐食与每日目标的差距。</p></div>
+            </div>
+            <form id="checkinDateForm" class="toolbar">
+                <input type="date" name="date" value="${escapeHtml(state.checkins.date)}" max="${dateInputValue(new Date())}">
+                <button class="btn soft" type="submit">查看日期</button>
+            </form>
+            <div class="grid two nutrition-target-grid" style="margin-top: 14px;">
+                ${nutritionTargetMetric("已摄入热量", `${formatNutritionValue(consumed.energyKcal)} kcal`)}
+                ${nutritionTargetMetric("已摄入蛋白质", `${formatNutritionValue(consumed.proteinG)} g`)}
+                ${nutritionTargetMetric("已摄入脂肪", `${formatNutritionValue(consumed.fatG)} g`)}
+                ${nutritionTargetMetric("已摄入碳水", `${formatNutritionValue(consumed.carbohydrateG)} g`)}
+            </div>
+            ${target && remaining ? `
+                <div class="subtle-divider"></div>
+                <p class="muted">每日目标 ${formatNutritionValue(target.dailyEnergyKcal)} kcal；剩余热量 ${formatNutritionValue(remaining.energyKcal)} kcal，蛋白质 ${formatNutritionValue(remaining.proteinG)} g。</p>
+            ` : ""}
+            <p class="muted">${escapeHtml(summary.message || "")}</p>
+            <div class="subtle-divider"></div>
+            <h3>已保存记录</h3>
+            <div class="checkin-history">
+                ${(summary.checkins || []).length ? summary.checkins.map(renderCheckinHistoryItem).join("") : `<div class="empty">这一天还没有饮食打卡。</div>`}
+            </div>
+        `;
+    }
+    function renderCheckinHistoryItem(checkin) {
+        const items = (checkin.items || []).map((item) => escapeHtml(item.name)).join("、") || "未命名菜品";
+        return `
+            <article class="checkin-history-item">
+                <div><strong>${escapeHtml(checkin.mealTime)}</strong><p class="muted">${items}</p><span>${formatNutritionValue(checkin.totals.energyKcal)} kcal · 蛋白质 ${formatNutritionValue(checkin.totals.proteinG)} g</span></div>
+                <div class="button-row">
+                    <button class="btn soft" type="button" data-action="view-checkin-image" data-id="${escapeHtml(checkin.id)}">查看图片</button>
+                    <button class="btn ghost" type="button" data-action="delete-checkin" data-id="${escapeHtml(checkin.id)}">删除</button>
+                </div>
+            </article>
+        `;
+    }
+    async function ensureCheckinSummary(force) {
+        if (!force && state.checkins.loaded) {
+            return state.checkins.summary;
+        }
+        if (state.checkins.loading) {
+            return state.checkins.summary;
+        }
+        state.checkins.loading = true;
+        try {
+            state.checkins.summary = await DietApi.getCheckinSummary(state.checkins.date);
+            state.checkins.loaded = true;
+            return state.checkins.summary;
+        } catch (error) {
+            showToast(error.message || "饮食打卡加载失败", "error");
+            return null;
+        } finally {
+            state.checkins.loading = false;
+        }
+    }
+    async function recognizeCheckinImage(form) {
+        const image = form.elements.image.files[0];
+        if (!image || state.checkins.uploading) {
+            return;
+        }
+        state.checkins.uploading = true;
+        renderCheckins();
+        try {
+            const recognition = await DietApi.recognizeCheckinImage(image);
+            revokeCheckinPreview();
+            state.checkins.previewUrl = URL.createObjectURL(image);
+            state.checkins.recognition = { ...recognition, items: recognition.items || [] };
+            showToast(recognition.automated ? "图片已识别，请核对后保存" : "图片已上传，请手动补充菜品");
+        } catch (error) {
+            showToast(error.message || "图片识别失败", "error");
+        } finally {
+            state.checkins.uploading = false;
+            renderCheckins();
+        }
+    }
+    function addCheckinItem() {
+        if (!state.checkins.recognition) {
+            return;
+        }
+        state.checkins.recognition.items.push({
+            name: "",
+            estimatedWeightG: null,
+            energyKcal: null,
+            proteinG: null,
+            fatG: null,
+            carbohydrateG: null,
+            confidence: null,
+            nutritionSource: "USER_CONFIRMED"
+        });
+        renderCheckins();
+    }
+    function removeCheckinItem(index) {
+        if (!state.checkins.recognition) {
+            return;
+        }
+        state.checkins.recognition.items.splice(Number(index), 1);
+        renderCheckins();
+    }
+    async function saveCheckin(form) {
+        const payload = {
+            recognitionId: String(new FormData(form).get("recognitionId") || ""),
+            checkinDate: String(new FormData(form).get("checkinDate") || ""),
+            mealTime: String(new FormData(form).get("mealTime") || ""),
+            items: Array.from(form.querySelectorAll("[data-checkin-item]")).map((element) => ({
+                name: String(element.querySelector("[name=name]").value || "").trim(),
+                estimatedWeightG: Number(element.querySelector("[name=estimatedWeightG]").value),
+                energyKcal: Number(element.querySelector("[name=energyKcal]").value),
+                proteinG: Number(element.querySelector("[name=proteinG]").value),
+                fatG: Number(element.querySelector("[name=fatG]").value),
+                carbohydrateG: Number(element.querySelector("[name=carbohydrateG]").value),
+                confidence: Number(element.querySelector("[name=confidence]").value),
+                nutritionSource: String(element.querySelector("[name=nutritionSource]").value || "USER_CONFIRMED")
+            }))
+        };
+        const restore = setLoading(form.querySelector("button[type=submit]"), "保存中...");
+        try {
+            await DietApi.saveCheckin(payload);
+            state.checkins.date = payload.checkinDate;
+            state.checkins.recognition = null;
+            revokeCheckinPreview();
+            await ensureCheckinSummary(true);
+            showToast("饮食打卡已保存");
+            renderCheckins();
+        } catch (error) {
+            showToast(error.message || "保存饮食打卡失败", "error");
+        } finally {
+            restore();
+        }
+    }
+    async function changeCheckinDate(form) {
+        state.checkins.date = String(new FormData(form).get("date") || dateInputValue(new Date()));
+        state.checkins.loaded = false;
+        await renderCheckins();
+    }
+    async function deleteCheckin(id) {
+        if (!window.confirm("确定删除这条饮食打卡吗？")) {
+            return;
+        }
+        try {
+            await DietApi.deleteCheckin(id);
+            await ensureCheckinSummary(true);
+            showToast("饮食打卡已删除");
+            renderCheckins();
+        } catch (error) {
+            showToast(error.message || "删除饮食打卡失败", "error");
+        }
+    }
+    async function viewCheckinImage(id) {
+        try {
+            const blob = await DietApi.getCheckinImage(id);
+            const objectUrl = URL.createObjectURL(blob);
+            window.open(objectUrl, "_blank", "noopener");
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60 * 1000);
+        } catch (error) {
+            showToast(error.message || "读取餐食图片失败", "error");
+        }
+    }
+    function revokeCheckinPreview() {
+        if (state.checkins.previewUrl) {
+            URL.revokeObjectURL(state.checkins.previewUrl);
+            state.checkins.previewUrl = null;
+        }
+    }
     function renderNutritionFields(nutrition) {
         const data = nutrition || {};
         const allergens = Array.isArray(data.allergens) ? data.allergens.join("，") : "";
@@ -749,6 +1037,21 @@
             id: String(formData.get("mealId") || "").trim(),
             payload
         };
+    }
+    function defaultCheckinState() {
+        return {
+            date: dateInputValue(new Date()),
+            loaded: false,
+            loading: false,
+            uploading: false,
+            summary: null,
+            recognition: null,
+            previewUrl: null
+        };
+    }
+    function dateInputValue(date) {
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
     }
     function numberOrNull(value) {
         const text = String(value || "").trim();
@@ -1183,6 +1486,14 @@
             state.traces.filters.sessionId = "";
             navigate("/admin/traces");
             selectTrace(target.dataset.traceId);
+        } else if (action === "add-checkin-item") {
+            addCheckinItem();
+        } else if (action === "remove-checkin-item") {
+            removeCheckinItem(target.dataset.index);
+        } else if (action === "delete-checkin") {
+            deleteCheckin(target.dataset.id);
+        } else if (action === "view-checkin-image") {
+            viewCheckinImage(target.dataset.id);
         }
     }
     function handleSubmit(event) {
@@ -1190,6 +1501,23 @@
         if (form.id === "chatForm") {
             event.preventDefault();
             submitChat(form);
+        } else if (form.id === "checkinImageForm") {
+            event.preventDefault();
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+            recognizeCheckinImage(form);
+        } else if (form.id === "checkinConfirmForm") {
+            event.preventDefault();
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+            saveCheckin(form);
+        } else if (form.id === "checkinDateForm") {
+            event.preventDefault();
+            changeCheckinDate(form);
         } else if (form.id === "profileForm") {
             event.preventDefault();
             if (!form.checkValidity()) {
@@ -1218,6 +1546,8 @@
     function resetUserScopedState() {
         state.home = { loaded: false, personalCount: 0, publicCount: 0 };
         state.profile = { loaded: false, loading: false, data: null };
+        revokeCheckinPreview();
+        state.checkins = defaultCheckinState();
         state.personalMeals = [];
         state.publicMeals = [];
         state.editingMeal = null;
