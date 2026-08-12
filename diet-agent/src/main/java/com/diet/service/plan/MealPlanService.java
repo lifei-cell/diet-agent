@@ -80,6 +80,7 @@ public class MealPlanService {
     public List<PlannedMeal> planMeals(
             SourceMode sourceMode,
             Long userId,
+            String userInput,
             SlotBundle baseSlots,
             NutritionConstraints nutritionConstraints,
             List<String> mealTimes
@@ -92,7 +93,7 @@ public class MealPlanService {
             SlotBundle querySlots = slotsForMealTime(baseSlots, mealTime);
             List<Long> excludeIds = List.copyOf(usedIds);
             List<MealItem> candidates = mealSearchService.search(
-                    new MealSearchRequest(sourceMode, userId, querySlots, nutritionConstraints, excludeIds));
+                    new MealSearchRequest(sourceMode, userId, querySlots, nutritionConstraints, excludeIds, userInput));
             MealRankResult rankResult = mealRankService.rank(
                     new MealRankRequest(candidates, querySlots, userId, nutritionConstraints, excludeIds));
             List<MealItem> ranked = rankResult.meals();

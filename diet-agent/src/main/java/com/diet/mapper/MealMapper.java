@@ -43,6 +43,43 @@ public interface MealMapper {
             @Param("excludedAllergensJson") String excludedAllergensJson,
             @Param("limit") int limit
     );
+
+    List<MealItemRow> searchBySlotIndex(
+            @Param("sourceMode") SourceMode sourceMode,
+            @Param("userId") Long userId,
+            @Param("mealTime") List<String> mealTime,
+            @Param("mood") List<String> mood,
+            @Param("scene") List<String> scene,
+            @Param("healthGoal") List<String> healthGoal,
+            @Param("cuisine") List<String> cuisine,
+            @Param("taste") List<String> taste,
+            @Param("convenience") List<String> convenience,
+            @Param("maxEnergyKcal") Double maxEnergyKcal,
+            @Param("minProteinG") Double minProteinG,
+            @Param("maxFatG") Double maxFatG,
+            @Param("maxCarbohydrateG") Double maxCarbohydrateG,
+            @Param("maxSodiumMg") Double maxSodiumMg,
+            @Param("excludedAllergensJson") String excludedAllergensJson,
+            @Param("limit") int limit
+    );
+
+    List<MealItemRow> searchKeywordCorpus(
+            @Param("sourceMode") SourceMode sourceMode,
+            @Param("userId") Long userId,
+            @Param("maxEnergyKcal") Double maxEnergyKcal,
+            @Param("minProteinG") Double minProteinG,
+            @Param("maxFatG") Double maxFatG,
+            @Param("maxCarbohydrateG") Double maxCarbohydrateG,
+            @Param("maxSodiumMg") Double maxSodiumMg,
+            @Param("excludedAllergensJson") String excludedAllergensJson,
+            @Param("limit") int limit
+    );
+
+    List<MealItemRow> findAccessibleByIds(
+            @Param("sourceMode") SourceMode sourceMode,
+            @Param("userId") Long userId,
+            @Param("ids") List<Long> ids
+    );
 }
 
 

@@ -313,6 +313,15 @@ CREATE TABLE IF NOT EXISTS `meal_item`  (
   INDEX `idx_private_meal_source`(`owner_user_id` ASC, `source_type` ASC) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 6 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
 
+-- Derived inverted index for structured meal retrieval. meal_item remains the source of truth.
+CREATE TABLE IF NOT EXISTS `meal_slot_tag`  (
+  `meal_id` bigint NOT NULL,
+  `slot_name` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `tag_value` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  PRIMARY KEY (`meal_id`, `slot_name`, `tag_value`) USING BTREE,
+  INDEX `idx_meal_slot_lookup`(`slot_name` ASC, `tag_value` ASC, `meal_id` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+
 -- ----------------------------
 -- Records of meal_item
 -- ----------------------------

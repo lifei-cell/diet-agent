@@ -176,4 +176,132 @@
         LIMIT #{limit}
     </select>
 
+    <!--
+      索引化结构化召回：每个有值的槽位通过 meal_slot_tag 的 (slot_name, tag_value, meal_id)
+      倒排索引过滤。营养和过敏原仍以 meal_item 作为唯一事实源。
+    -->
+    <select id="searchBySlotIndex" resultMap="MealItemRowMap">
+        SELECT <include refid="MealColumns"/>
+        FROM meal_item m
+        <where>
+            <choose>
+                <when test="sourceMode != null and sourceMode.name() == 'PERSONAL'">
+                    m.source_type = 'PERSONAL'
+                    AND m.owner_user_id = #{userId}
+                </when>
+                <otherwise>
+                    m.source_type = 'PUBLIC'
+                    AND m.owner_user_id IS NULL
+                </otherwise>
+            </choose>
+            <if test="mealTime != null and !mealTime.isEmpty()">
+                AND EXISTS (SELECT 1 FROM meal_slot_tag tag
+                    WHERE tag.meal_id = m.id AND tag.slot_name = 'mealTime'
+                    AND tag.tag_value IN
+                    <foreach collection="mealTime" item="value" open="(" separator="," close=")">#{value}</foreach>)
+            </if>
+            <if test="mood != null and !mood.isEmpty()">
+                AND EXISTS (SELECT 1 FROM meal_slot_tag tag
+                    WHERE tag.meal_id = m.id AND tag.slot_name = 'mood'
+                    AND tag.tag_value IN
+                    <foreach collection="mood" item="value" open="(" separator="," close=")">#{value}</foreach>)
+            </if>
+            <if test="scene != null and !scene.isEmpty()">
+                AND EXISTS (SELECT 1 FROM meal_slot_tag tag
+                    WHERE tag.meal_id = m.id AND tag.slot_name = 'scene'
+                    AND tag.tag_value IN
+                    <foreach collection="scene" item="value" open="(" separator="," close=")">#{value}</foreach>)
+            </if>
+            <if test="healthGoal != null and !healthGoal.isEmpty()">
+                AND EXISTS (SELECT 1 FROM meal_slot_tag tag
+                    WHERE tag.meal_id = m.id AND tag.slot_name = 'healthGoal'
+                    AND tag.tag_value IN
+                    <foreach collection="healthGoal" item="value" open="(" separator="," close=")">#{value}</foreach>)
+            </if>
+            <if test="cuisine != null and !cuisine.isEmpty()">
+                AND EXISTS (SELECT 1 FROM meal_slot_tag tag
+                    WHERE tag.meal_id = m.id AND tag.slot_name = 'cuisine'
+                    AND tag.tag_value IN
+                    <foreach collection="cuisine" item="value" open="(" separator="," close=")">#{value}</foreach>)
+            </if>
+            <if test="taste != null and !taste.isEmpty()">
+                AND EXISTS (SELECT 1 FROM meal_slot_tag tag
+                    WHERE tag.meal_id = m.id AND tag.slot_name = 'taste'
+                    AND tag.tag_value IN
+                    <foreach collection="taste" item="value" open="(" separator="," close=")">#{value}</foreach>)
+            </if>
+            <if test="convenience != null and !convenience.isEmpty()">
+                AND EXISTS (SELECT 1 FROM meal_slot_tag tag
+                    WHERE tag.meal_id = m.id AND tag.slot_name = 'convenience'
+                    AND tag.tag_value IN
+                    <foreach collection="convenience" item="value" open="(" separator="," close=")">#{value}</foreach>)
+            </if>
+            AND (#{maxEnergyKcal} IS NULL OR (m.energy_kcal IS NOT NULL AND m.energy_kcal &lt;= #{maxEnergyKcal}))
+            AND (#{minProteinG} IS NULL OR (m.protein_g IS NOT NULL AND m.protein_g >= #{minProteinG}))
+            AND (#{maxFatG} IS NULL OR (m.fat_g IS NOT NULL AND m.fat_g &lt;= #{maxFatG}))
+            AND (#{maxCarbohydrateG} IS NULL OR (m.carbohydrate_g IS NOT NULL AND m.carbohydrate_g &lt;= #{maxCarbohydrateG}))
+            AND (#{maxSodiumMg} IS NULL OR (m.sodium_mg IS NOT NULL AND m.sodium_mg &lt;= #{maxSodiumMg}))
+            AND (
+                #{excludedAllergensJson} = '[]'
+                OR (m.allergens IS NOT NULL AND NOT JSON_OVERLAPS(m.allergens, #{excludedAllergensJson}))
+            )
+        </where>
+        ORDER BY m.updated_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <!--
+      BM25 语料：这里只做数据隔离与硬约束过滤，不使用 LIKE。词法匹配与 BM25 排序在
+      Bm25KeywordMealRetriever 内完成，之后仍与结构化、向量通道做 RRF 融合。
+    -->
+    <select id="searchKeywordCorpus" resultMap="MealItemRowMap">
+        SELECT <include refid="MealColumns"/>
+        FROM meal_item
+        <where>
+            <choose>
+                <when test="sourceMode != null and sourceMode.name() == 'PERSONAL'">
+                    source_type = 'PERSONAL'
+                    AND owner_user_id = #{userId}
+                </when>
+                <otherwise>
+                    source_type = 'PUBLIC'
+                    AND owner_user_id IS NULL
+                </otherwise>
+            </choose>
+            AND (#{maxEnergyKcal} IS NULL OR (energy_kcal IS NOT NULL AND energy_kcal &lt;= #{maxEnergyKcal}))
+            AND (#{minProteinG} IS NULL OR (protein_g IS NOT NULL AND protein_g >= #{minProteinG}))
+            AND (#{maxFatG} IS NULL OR (fat_g IS NOT NULL AND fat_g &lt;= #{maxFatG}))
+            AND (#{maxCarbohydrateG} IS NULL OR (carbohydrate_g IS NOT NULL AND carbohydrate_g &lt;= #{maxCarbohydrateG}))
+            AND (#{maxSodiumMg} IS NULL OR (sodium_mg IS NOT NULL AND sodium_mg &lt;= #{maxSodiumMg}))
+            AND (
+                #{excludedAllergensJson} = '[]'
+                OR (allergens IS NOT NULL AND NOT JSON_OVERLAPS(allergens, #{excludedAllergensJson}))
+            )
+        </where>
+        ORDER BY updated_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 外部向量索引返回的 ID 必须在主库按数据源和所有者重新授权。 -->
+    <select id="findAccessibleByIds" resultMap="MealItemRowMap">
+        SELECT <include refid="MealColumns"/>
+        FROM meal_item
+        <where>
+            <choose>
+                <when test="sourceMode != null and sourceMode.name() == 'PERSONAL'">
+                    source_type = 'PERSONAL'
+                    AND owner_user_id = #{userId}
+                </when>
+                <otherwise>
+                    source_type = 'PUBLIC'
+                    AND owner_user_id IS NULL
+                </otherwise>
+            </choose>
+            AND id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">
+                #{id}
+            </foreach>
+        </where>
+    </select>
+
 </mapper>

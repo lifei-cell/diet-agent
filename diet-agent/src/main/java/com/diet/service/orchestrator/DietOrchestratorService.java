@@ -415,7 +415,7 @@ public class DietOrchestratorService {
                                       SessionState state,
                                       List<String> planMealTimes) {
         List<MealPlanService.PlannedMeal> plannedMeals = mealPlanService.planMeals(
-                state.sourceMode(), userId, state.slots(), state.nutritionConstraints(), planMealTimes);
+                state.sourceMode(), userId, userInput, state.slots(), state.nutritionConstraints(), planMealTimes);
 
         List<Map<String, Object>> planTrace = new ArrayList<>();
         for (MealPlanService.PlannedMeal planned : plannedMeals) {
@@ -513,7 +513,7 @@ public class DietOrchestratorService {
     private ChatResponse completeRecommendation(String sessionId, Long userId, String userInput, String traceId, SessionState state, List<Long> excludeMealIds) {
         // 构造检索请求：sourceMode + userId + 当前 slots + excludeMealIds（检索层暂不使用 exclude，在 Rank 层过滤）
         List<MealItem> candidates = mealSearchService.search(new MealSearchRequest(
-                state.sourceMode(), userId, state.slots(), state.nutritionConstraints(), excludeMealIds));
+                state.sourceMode(), userId, state.slots(), state.nutritionConstraints(), excludeMealIds, userInput));
         // Trace 事件：MEAL_SEARCHED | 阶段 SEARCH | 输入=slots | 输出=候选数量+candidates 列表
         agentTraceService.recordEvent(
                 "MEAL_SEARCHED",

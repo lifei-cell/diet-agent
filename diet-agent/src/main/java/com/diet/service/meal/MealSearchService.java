@@ -9,17 +9,17 @@ import java.util.List;
 
 /**
  * 餐食检索服务（Orchestrator 推荐流水线第一层）。
- * 按 sourceMode、userId、slots 从 DB 召回候选，不负责最终重排和 excludeMealIds 过滤。
+ * 使用结构化、关键词、可选向量三路召回；营养、过敏原和数据源权限仍由本服务主库保障。
  */
 @Service
 public class MealSearchService {
 
-    /** 底层餐食服务，封装 MyBatis JSON_OVERLAPS 检索。 */
-    private final MealService mealService;
+    /** 混合召回服务，负责多路候选生成和 RRF 融合。 */
+    private final HybridMealRetrievalService hybridMealRetrievalService;
 
     /** 构造器注入 MealService。 */
-    public MealSearchService(MealService mealService) {
-        this.mealService = mealService;
+    public MealSearchService(HybridMealRetrievalService hybridMealRetrievalService) {
+        this.hybridMealRetrievalService = hybridMealRetrievalService;
     }
 
     /**
@@ -37,7 +37,6 @@ public class MealSearchService {
             throw new DietException("PERSONAL 模式必须提供 userId");
         }
 
-        // MealService.search：MySQL JSON_OVERLAPS
-        return mealService.search(request.sourceMode(), request.userId(), request.slots(), request.nutritionConstraints());
+        return hybridMealRetrievalService.retrieve(request);
     }
 }

@@ -37,6 +37,9 @@ public class IntentAgentService {
     /** 链路追踪服务，callAgent 内部会记录 AGENT_CALL 事件。 */
     private final AgentTraceService agentTraceService;
 
+    /** 模型漏抽取明确餐次/目标时的规则兜底。 */
+    private final IntentSlotFallbackService intentSlotFallbackService;
+
     /** IntentAgent 使用的轻量模型名，来自配置 diet.llm.light-model。 */
     private final String modelName;
 
@@ -46,12 +49,14 @@ public class IntentAgentService {
             LlmJsonService llmJsonService,
             SlotOptionService slotOptionService,
             AgentTraceService agentTraceService,
+            IntentSlotFallbackService intentSlotFallbackService,
             @Value("${diet.llm.light-model:qwen-turbo}") String modelName
     ) {
         this.agentFactory = agentFactory;
         this.llmJsonService = llmJsonService;
         this.slotOptionService = slotOptionService;
         this.agentTraceService = agentTraceService;
+        this.intentSlotFallbackService = intentSlotFallbackService;
         this.modelName = modelName;
     }
 
@@ -123,14 +128,15 @@ public class IntentAgentService {
         JsonNode slotsNode = root.path("slots").isObject() ? root.path("slots") : root;
 
         // 将 JSON slots 各字段映射为 SlotBundle，并过滤非法字典值
-        SlotBundle slots = parseSlots(slotsNode, slotOptions);
+        SlotBundle slots = intentSlotFallbackService.mergeExplicitSignals(
+                userInput, parseSlots(slotsNode, slotOptions), slotOptions);
         NutritionConstraints nutritionConstraints = parseNutritionConstraints(root, userInput);
 
         // 读取 confidence 字段，缺省 0.5
         double confidence = root.path("confidence").asDouble(0.5);
 
         // 组装并返回 IntentResult
-        return new IntentResult(intent, slots, nutritionConstraints, confidence);
+        return new IntentResult(intentSlotFallbackService.reviseClarifyIntent(intent, slots), slots, nutritionConstraints, confidence);
     }
 
     /** 将 JSON 中的 intent 字符串解析为 Intent 枚举。 */

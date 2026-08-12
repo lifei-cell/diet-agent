@@ -57,6 +57,7 @@ class MealRankServiceTest {
 
         assertEquals(2L, result.meals().getFirst().id());
         assertTrue(result.scores().getFirst().preferenceScore() > result.scores().get(1).preferenceScore());
+        assertEquals(1.0, result.scores().getFirst().contextScore());
     }
 
     @Test

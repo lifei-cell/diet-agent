@@ -22,15 +22,22 @@ import java.util.Set;
  * 提供 CRUD 和基于 MySQL JSON_OVERLAPS 的标签检索；Orchestrator 推荐链路通过 {@link #search} 召回候选。
  */
 @Service
-public class MealService {
+public class MealService implements MealCandidateRepository {
 
     /** 单次检索从 DB 拉取的最大行数，初排后取 top10 交给 Rank 层。 */
     private static final int SEARCH_LIMIT = 50;
     private final MealMapper mealMapper;
+    private final MealSlotTagService mealSlotTagService;
     private final SlotOptionService slotOptionService;
     private final JsonService jsonService;
-    public MealService(MealMapper mealMapper, SlotOptionService slotOptionService, JsonService jsonService) {
+    public MealService(
+            MealMapper mealMapper,
+            MealSlotTagService mealSlotTagService,
+            SlotOptionService slotOptionService,
+            JsonService jsonService
+    ) {
         this.mealMapper = mealMapper;
+        this.mealSlotTagService = mealSlotTagService;
         this.slotOptionService = slotOptionService;
         this.jsonService = jsonService;
     }
@@ -66,6 +73,7 @@ public class MealService {
         validateMealRequest(request);
         MealItemRow row = toRow(null, SourceMode.PERSONAL, userId, request);
         mealMapper.insert(row);
+        mealSlotTagService.replaceTags(row.getId(), request.toSlots());
         return toMealItem(row);
     }
 
@@ -77,35 +85,44 @@ public class MealService {
         if (updated == 0) {
             throw new DietException("个人餐食不存在或无权限修改");
         }
+        mealSlotTagService.replaceTags(mealId, request.toSlots());
         return toMealItem(mealMapper.findPersonalById(mealId, userId));
     }
 
     @Transactional
     public void deletePersonalMeal(Long userId, Long mealId) {
+        // 源记录删除成功后清理派生索引；整个方法受 @Transactional 保护，可一起回滚。
         int deleted = mealMapper.deletePersonal(mealId, userId);
         if (deleted == 0) {
             throw new DietException("个人餐食不存在或无权限删除");
         }
+        mealSlotTagService.removeTags(mealId);
     }
 
     /**
-     * 按槽位标签检索餐食并计算初排 matchScore。
-     * 由 MealSearchService#search 调用；MySQL JSON_OVERLAPS 召回后 Java 侧 overlap 打分。
+     * 兼容旧调用的结构化召回入口。新的混合召回由 HybridMealRetrievalService 组合多个通道。
      */
     public List<MealItem> search(SourceMode sourceMode, Long userId, SlotBundle slots, NutritionConstraints nutritionConstraints) {
+        return searchStructured(sourceMode, userId, slots, nutritionConstraints);
+    }
+
+    /**
+     * 按标准化后的槽位标签进行结构化召回；营养和过敏原条件始终在数据库层硬过滤。
+     */
+    public List<MealItem> searchStructured(SourceMode sourceMode, Long userId, SlotBundle slots, NutritionConstraints nutritionConstraints) {
         NutritionConstraints safeConstraints = NutritionConstraints.sanitize(nutritionConstraints);
         SlotBundle safeSlots = slots == null ? SlotBundle.empty() : slots;
-        // MyBatis 执行 JSON_OVERLAPS 检索，7 维槽位各传 JSON 数组，最多拉 SEARCH_LIMIT=50 条
-        List<MealItemRow> rows = mealMapper.search(
+        // 从 meal_slot_tag 倒排索引查 7 维标签，避免对 meal_item JSON 列全表 JSON_OVERLAPS 扫描。
+        List<MealItemRow> rows = mealMapper.searchBySlotIndex(
                 sourceMode,                                      // PERSONAL 或 PUBLIC，决定查哪张数据
                 userId,                                          // PERSONAL 时过滤 owner_user_id
-                jsonService.toJsonArray(safeSlots.mealTime()),       // 餐次标签 JSON 数组
-                jsonService.toJsonArray(safeSlots.mood()),           // 心情标签 JSON 数组
-                jsonService.toJsonArray(safeSlots.scene()),          // 场景标签 JSON 数组
-                jsonService.toJsonArray(safeSlots.healthGoal()),     // 健康目标 JSON 数组
-                jsonService.toJsonArray(safeSlots.cuisine()),        // 菜系 JSON 数组
-                jsonService.toJsonArray(safeSlots.taste()),          // 口味 JSON 数组
-                jsonService.toJsonArray(safeSlots.convenience()),    // 便捷性 JSON 数组
+                safeSlots.mealTime(),
+                safeSlots.mood(),
+                safeSlots.scene(),
+                safeSlots.healthGoal(),
+                safeSlots.cuisine(),
+                safeSlots.taste(),
+                safeSlots.convenience(),
                 safeConstraints.maxEnergyKcal(),
                 safeConstraints.minProteinG(),
                 safeConstraints.maxFatG(),
@@ -116,6 +133,47 @@ public class MealService {
         );
         // Row → MealItem
         return rows.stream().map(this::toMealItem).toList();
+    }
+
+    /**
+     * 为应用侧 BM25 提供受限语料。数据库只负责权限与硬约束过滤，避免 BM25 将不合规餐食带回候选集。
+     */
+    @Override
+    public List<MealItem> searchKeywordCorpus(
+            SourceMode sourceMode,
+            Long userId,
+            NutritionConstraints nutritionConstraints,
+            int limit
+    ) {
+        NutritionConstraints safeConstraints = NutritionConstraints.sanitize(nutritionConstraints);
+        int safeLimit = Math.max(20, Math.min(2_000, limit));
+        return mealMapper.searchKeywordCorpus(
+                        sourceMode,
+                        userId,
+                        safeConstraints.maxEnergyKcal(),
+                        safeConstraints.minProteinG(),
+                        safeConstraints.maxFatG(),
+                        safeConstraints.maxCarbohydrateG(),
+                        safeConstraints.maxSodiumMg(),
+                        jsonService.toJsonArray(safeConstraints.excludedAllergens()),
+                        safeLimit
+                ).stream()
+                .map(this::toMealItem)
+                .toList();
+    }
+
+    /**
+     * 从外部向量服务返回的 ID 中重新加载本库可访问的餐食。调用方还必须执行营养硬约束校验。
+     */
+    public List<MealItem> findAccessibleByIds(SourceMode sourceMode, Long userId, List<Long> ids) {
+        if (sourceMode == null || ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        List<Long> safeIds = ids.stream().filter(java.util.Objects::nonNull).distinct().limit(100).toList();
+        if (safeIds.isEmpty()) {
+            return List.of();
+        }
+        return mealMapper.findAccessibleByIds(sourceMode, userId, safeIds).stream().map(this::toMealItem).toList();
     }
 
     private void validateMealRequest(MealRequest request) {

@@ -49,6 +49,23 @@ diet:
       bucket: ${MINIO_BUCKET:diet-checkin-images}
   session:
     max-history-turns: 10
+  retrieval:
+    # 结构化倒排检索始终启用；关键词通道为“主库硬过滤 + 应用侧 BM25”。
+    keyword:
+      enabled: ${DIET_RETRIEVAL_KEYWORD_ENABLED:true}
+      # 每次进入 BM25 的最大受限语料数；超过此规模建议将 KeywordMealCandidateRetriever 换为 OpenSearch 实现。
+      corpus-limit: ${DIET_RETRIEVAL_KEYWORD_CORPUS_LIMIT:500}
+      result-limit: ${DIET_RETRIEVAL_KEYWORD_RESULT_LIMIT:50}
+      bm25:
+        k1: ${DIET_RETRIEVAL_KEYWORD_BM25_K1:1.2}
+        b: ${DIET_RETRIEVAL_KEYWORD_BM25_B:0.75}
+    # RRF 融合后的最大候选数，后续由 MealRankService 做个性化重排。
+    candidate-limit: ${DIET_RETRIEVAL_CANDIDATE_LIMIT:80}
+    vector:
+      # 仅在部署方已建立按 sourceMode/userId 隔离的向量索引时开启。
+      enabled: ${DIET_RETRIEVAL_VECTOR_ENABLED:false}
+      endpoint: ${DIET_RETRIEVAL_VECTOR_ENDPOINT:}
+      top-k: ${DIET_RETRIEVAL_VECTOR_TOP_K:50}
 logging:
   level:
     com.diet: INFO

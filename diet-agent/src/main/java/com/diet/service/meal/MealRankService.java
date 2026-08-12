@@ -171,18 +171,32 @@ public class MealRankService {
         target.add(clamp(0.75 + 0.25 * Math.min(1.0, Math.max(0.0, value / min - 1.0))));
     }
 
-    /** 计算餐食 slots 与查询 slots 的 7 维平均重叠比例。 */
+    /**
+     * 计算餐食 slots 与查询 slots 的已填写维度平均重叠比例。
+     *
+     * <p>不能固定除以 7：用户只表达“午餐 + 高蛋白”时，完整匹配原来最高也只有 2/7，
+     * 会让长期偏好或历史反馈不当地盖过本轮明确需求。</p>
+     */
     private double slotScore(SlotBundle item, SlotBundle query) {
         SlotBundle safeQuery = query == null ? SlotBundle.empty() : query;
-        // 7 维各自算 overlap 后求和
-        double total = overlap(item.mealTime(), safeQuery.mealTime())
-                + overlap(item.mood(), safeQuery.mood())
-                + overlap(item.scene(), safeQuery.scene())
-                + overlap(item.healthGoal(), safeQuery.healthGoal())
-                + overlap(item.cuisine(), safeQuery.cuisine())
-                + overlap(item.taste(), safeQuery.taste())
-                + overlap(item.convenience(), safeQuery.convenience());
-        return clamp(total / 7.0); // 归一化到 [0,1]
+        List<Double> activeDimensionScores = new ArrayList<>();
+        appendOverlap(activeDimensionScores, item.mealTime(), safeQuery.mealTime());
+        appendOverlap(activeDimensionScores, item.mood(), safeQuery.mood());
+        appendOverlap(activeDimensionScores, item.scene(), safeQuery.scene());
+        appendOverlap(activeDimensionScores, item.healthGoal(), safeQuery.healthGoal());
+        appendOverlap(activeDimensionScores, item.cuisine(), safeQuery.cuisine());
+        appendOverlap(activeDimensionScores, item.taste(), safeQuery.taste());
+        appendOverlap(activeDimensionScores, item.convenience(), safeQuery.convenience());
+        return activeDimensionScores.isEmpty()
+                ? 0.0
+                : clamp(activeDimensionScores.stream().mapToDouble(Double::doubleValue).average().orElse(0.0));
+    }
+
+    /** 只有用户本轮实际填写的维度才参与上下文匹配分母。 */
+    private void appendOverlap(List<Double> target, List<String> itemValues, List<String> queryValues) {
+        if (queryValues != null && !queryValues.isEmpty()) {
+            target.add(overlap(itemValues, queryValues));
+        }
     }
 
     /** 计算 queryValues 中有多少标签出现在 itemValues 中，返回命中比例。 */

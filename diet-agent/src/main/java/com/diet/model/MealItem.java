@@ -1,11 +1,13 @@
 package com.diet.model;
 
 import com.diet.enums.SourceMode;
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import lombok.Data;
 import lombok.experimental.Accessors;
 
 @Data
 @Accessors(fluent = true)
+@JsonAutoDetect(fieldVisibility = JsonAutoDetect.Visibility.ANY)
 public class MealItem {
     private Long id;
     private SourceMode sourceType;
