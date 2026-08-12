@@ -1,12 +1,15 @@
 package com.diet.service.checkin;
 
 import com.diet.model.FoodRecognitionItem;
+import com.diet.service.llm.LlmCallResilience;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
@@ -29,18 +32,40 @@ public class FoodImageRecognitionService {
     private final String apiKey;
     private final String visionModel;
     private final String apiUrl;
+    private final LlmCallResilience llmCallResilience;
 
+    @Autowired
     public FoodImageRecognitionService(
             ObjectMapper objectMapper,
             @Value("${agentscope.dashscope.api-key:}") String apiKey,
             @Value("${diet.vision.model:qwen3.7-plus}") String visionModel,
-            @Value("${diet.vision.api-url:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}") String apiUrl
+            @Value("${diet.vision.api-url:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}") String apiUrl,
+            LlmCallResilience llmCallResilience,
+            @Value("${diet.llm.resilience.vision-connect-timeout-ms:3000}") int connectTimeoutMs,
+            @Value("${diet.llm.resilience.vision-read-timeout-ms:10000}") int readTimeoutMs
     ) {
-        this.restClient = RestClient.create();
+        this(buildRestClient(connectTimeoutMs, readTimeoutMs), objectMapper, apiKey, visionModel, apiUrl, llmCallResilience);
+    }
+
+    /** Keeps direct construction in lightweight tests and tools possible. */
+    public FoodImageRecognitionService(ObjectMapper objectMapper, String apiKey, String visionModel, String apiUrl) {
+        this(RestClient.create(), objectMapper, apiKey, visionModel, apiUrl, new LlmCallResilience());
+    }
+
+    FoodImageRecognitionService(
+            RestClient restClient,
+            ObjectMapper objectMapper,
+            String apiKey,
+            String visionModel,
+            String apiUrl,
+            LlmCallResilience llmCallResilience
+    ) {
+        this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.apiKey = apiKey;
         this.visionModel = visionModel;
         this.apiUrl = apiUrl;
+        this.llmCallResilience = llmCallResilience;
     }
 
     public RecognitionResult recognize(byte[] imageData, String mediaType) {
@@ -48,13 +73,14 @@ public class FoodImageRecognitionService {
             return RecognitionResult.manual("图片已保存为待确认草稿。视觉识别服务尚未配置，请手动补充菜品和营养数据。");
         }
         try {
-            String response = restClient.post()
+            LlmCallResilience.Execution<String> execution = llmCallResilience.execute("food-vision", () -> restClient.post()
                     .uri(apiUrl)
                     .contentType(MediaType.APPLICATION_JSON)
                     .header("Authorization", "Bearer " + apiKey)
                     .body(buildRequest(imageData, mediaType))
                     .retrieve()
-                    .body(String.class);
+                    .body(String.class));
+            String response = execution.value();
             List<FoodRecognitionItem> items = parseItems(response);
             if (items.isEmpty()) {
                 return RecognitionResult.manual("未能从图片中可靠识别菜品，请手动补充后再保存打卡。");
@@ -62,9 +88,21 @@ public class FoodImageRecognitionService {
             return new RecognitionResult(true,
                     "已识别出图片中的菜品和估算营养，请核对份量、油盐和酱料后再确认打卡。", items);
         } catch (Exception exception) {
-            log.warn("Food image recognition is unavailable: {}", exception.getMessage());
+            if (exception instanceof LlmCallResilience.LlmCallException llmError) {
+                log.warn("Food image recognition degraded: channel={}, attempts={}, circuitOpen={}",
+                        llmError.channel(), llmError.attempts(), llmError.circuitOpen());
+            } else {
+                log.warn("Food image recognition is unavailable: {}", exception.getMessage());
+            }
             return RecognitionResult.manual("自动识别暂不可用，图片已保存为待确认草稿；你可以手动填写后完成打卡。");
         }
+    }
+
+    private static RestClient buildRestClient(int connectTimeoutMs, int readTimeoutMs) {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(Math.max(500, connectTimeoutMs));
+        requestFactory.setReadTimeout(Math.max(1_000, readTimeoutMs));
+        return RestClient.builder().requestFactory(requestFactory).build();
     }
 
     private Map<String, Object> buildRequest(byte[] imageData, String mediaType) {

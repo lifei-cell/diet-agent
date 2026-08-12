@@ -21,7 +21,8 @@ public interface SessionMapper {
             @Param("role") String role,
             @Param("content") String content,
             @Param("intent") String intent,
-            @Param("traceId") String traceId
+            @Param("traceId") String traceId,
+            @Param("requestId") String requestId
     );
 
     List<SessionMessageRow> listRecentMessages(

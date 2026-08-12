@@ -7,6 +7,7 @@ import com.diet.model.SessionMessageRow;
 import com.diet.model.SessionRow;
 import com.diet.util.JsonService;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import java.time.ZoneId;
 import java.util.Collections;
@@ -48,6 +49,7 @@ public class SessionService {
         row.setPhase("START");                                               // 初始阶段
         row.setSlots("{}");                                                  // 空 slots JSON
         row.setLastRecommendations(jsonService.toJsonArray(List.of()));      // 空推荐 ID 列表
+        row.setVersion(0);
         sessionMapper.insert(row);                                           // INSERT diet_sessions
         return row.getId();                                                  // 返回 sessionId
     }
@@ -64,7 +66,15 @@ public class SessionService {
             row.setPhase("START");
             row.setSlots("{}");
             row.setLastRecommendations(jsonService.toJsonArray(List.of()));
-            sessionMapper.insert(row);
+            row.setVersion(0);
+            try {
+                sessionMapper.insert(row);
+            } catch (DuplicateKeyException duplicate) {
+                // 同一客户端 sessionId 被两个副本并发初始化时，获胜副本的行已可直接复用。
+                if (sessionMapper.findById(sessionId, userId) == null) {
+                    throw duplicate;
+                }
+            }
         }
     }
 
@@ -73,8 +83,13 @@ public class SessionService {
      * 由 Orchestrator 在每轮用户/助手消息产生时调用。
      */
     public void appendMessage(String sessionId, String role, String content, String intent, String traceId) {
+        appendMessage(sessionId, role, content, intent, traceId, null);
+    }
+
+    /** requestId 非空时，数据库唯一索引保证同一幂等请求不会重复插入同角色消息。 */
+    public void appendMessage(String sessionId, String role, String content, String intent, String traceId, String requestId) {
         // INSERT：sessionId + role(user/assistant) + content + intent + traceId
-        sessionMapper.insertMessage(sessionId, role, content == null ? "" : content, intent, traceId);
+        sessionMapper.insertMessage(sessionId, role, content == null ? "" : content, intent, traceId, requestId);
     }
 
     /**

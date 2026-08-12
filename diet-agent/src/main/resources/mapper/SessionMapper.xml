@@ -10,6 +10,7 @@
         <result property="phase" column="phase"/>
         <result property="slots" column="slots"/>
         <result property="lastRecommendations" column="last_recommendations"/>
+        <result property="version" column="version"/>
         <result property="createdAt" column="created_at"/>
         <result property="updatedAt" column="updated_at"/>
     </resultMap>
@@ -26,9 +27,9 @@
 
     <insert id="insert" parameterType="com.diet.model.SessionRow">
         INSERT INTO diet_sessions (
-        id, user_id, phase, slots, last_recommendations, created_at, updated_at
+        id, user_id, phase, slots, last_recommendations, version, created_at, updated_at
         ) VALUES (
-        #{id}, #{userId}, #{phase}, #{slots}, #{lastRecommendations}, NOW(), NOW()
+        #{id}, #{userId}, #{phase}, #{slots}, #{lastRecommendations}, #{version}, NOW(), NOW()
         )
     </insert>
 
@@ -38,6 +39,7 @@
         phase,
         slots,
         last_recommendations,
+        version,
         created_at,
         updated_at
         FROM diet_sessions
@@ -51,6 +53,7 @@
         phase,
         slots,
         last_recommendations,
+        version,
         created_at,
         updated_at
         FROM diet_sessions
@@ -63,14 +66,17 @@
         SET phase = #{phase},
         slots = #{slots},
         last_recommendations = #{lastRecommendations},
+        version = version + 1,
         updated_at = NOW()
         WHERE id = #{id}
         AND user_id = #{userId}
+        AND version = #{version}
     </update>
 
     <insert id="insertMessage">
-        INSERT INTO diet_messages (session_id, role, content, intent, agent_trace_id, created_at)
-        VALUES (#{sessionId}, #{role}, #{content}, #{intent}, #{traceId}, NOW())
+        INSERT INTO diet_messages (session_id, role, content, intent, agent_trace_id, request_id, created_at)
+        VALUES (#{sessionId}, #{role}, #{content}, #{intent}, #{traceId}, #{requestId}, NOW())
+        ON DUPLICATE KEY UPDATE id = id
     </insert>
 
     <select id="listRecentMessages" resultMap="SessionMessageRowMap">

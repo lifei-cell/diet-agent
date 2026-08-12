@@ -1,6 +1,7 @@
 package com.diet.service.orchestrator;
 
 import com.diet.exception.DietException;
+import com.diet.exception.SessionConflictException;
 import com.diet.service.intent.IntentAgentService;
 import com.diet.service.intent.IntentReviseService;
 import com.diet.service.risk.RiskGuardService;
@@ -33,6 +34,8 @@ import com.diet.service.profile.UserHealthProfileService;
 import com.diet.service.recommend.RecommendResponseAgentService;
 import com.diet.service.session.SessionService;
 import com.diet.service.session.SessionStateService;
+import com.diet.service.session.ChatIdempotencyService;
+import com.diet.service.session.RedisSessionLockService;
 import com.diet.service.slot.SlotMergeService;
 import com.diet.service.trace.AgentTraceService;
 import org.springframework.stereotype.Service;
@@ -42,7 +45,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 饮食推荐多 Agent 编排服务（Orchestrator）。
@@ -132,10 +134,11 @@ public class DietOrchestratorService {
      */
     private final AgentTraceService agentTraceService;
 
-    /**
-     * 会话级锁 Map，key=sessionId，value=锁对象，保证同 session 串行写状态。
-     */
-    private final Map<String, Object> sessionLocks = new ConcurrentHashMap<>();
+    /** 多副本共享的 Redis 会话锁，保证同一会话跨 JVM 串行。 */
+    private final RedisSessionLockService sessionLockService;
+
+    /** 请求幂等记录，重试时直接复用已持久化的 ChatResponse。 */
+    private final ChatIdempotencyService chatIdempotencyService;
 
     /**
      * Spring 构造器注入全部依赖。
@@ -155,7 +158,9 @@ public class DietOrchestratorService {
             MealService mealService,
             UserHealthProfileService userHealthProfileService,
             RiskGuardService riskGuardService,
-            AgentTraceService agentTraceService
+            AgentTraceService agentTraceService,
+            RedisSessionLockService sessionLockService,
+            ChatIdempotencyService chatIdempotencyService
     ) {
         this.sessionService = sessionService;                           // 注入消息落库服务
         this.sessionStateService = sessionStateService;                 // 注入会话状态服务
@@ -172,17 +177,23 @@ public class DietOrchestratorService {
         this.userHealthProfileService = userHealthProfileService;       // 注入用户健康档案服务
         this.riskGuardService = riskGuardService;             // 注入健康守卫
         this.agentTraceService = agentTraceService;                     // 注入链路追踪服务
+        this.sessionLockService = sessionLockService;
+        this.chatIdempotencyService = chatIdempotencyService;
     }
 
     /**
      * 同步处理一轮用户输入并返回完整推荐结果（HTTP 入口对应方法）。
      */
     public ChatResponse dietChat(Long userId, ChatRequest request) {
-        // 生成本轮唯一 traceId，格式 trace_<32位hex>，贯穿整轮请求的所有 Trace 事件
-        String traceId = "trace_" + UUID.randomUUID().toString().replace("-", "");
         // 校验 request 非空且 message 非空白，否则抛业务异常
         if (request == null || request.message() == null || request.message().isBlank()) {
             throw new DietException("用户问题不能为空");
+        }
+        if (request.sessionId() == null || request.sessionId().isBlank()) {
+            throw new DietException("sessionId 不能为空；请先创建会话后再发送消息");
+        }
+        if (request.requestId() == null || request.requestId().isBlank() || request.requestId().length() > 128) {
+            throw new DietException("requestId 不能为空且长度不能超过 128；重试时必须复用同一 requestId");
         }
         // 校验 sourceMode 必填（PERSONAL 个人库 / PUBLIC 公共库），否则无法检索
         if (request.sourceMode() == null) {
@@ -191,30 +202,56 @@ public class DietOrchestratorService {
 
         // 从 DB 加载已有会话状态，或按 sessionId/userId 创建新会话，得到 slots/phase/lastRecommendations 等
         SessionState initialState = sessionStateService.loadOrCreate(request.sessionId(), userId, request.sourceMode());
+        String requestHash = chatIdempotencyService.requestHash(request);
+        ChatResponse cached = chatIdempotencyService.findCompleted(
+                userId, initialState.sessionId(), request.requestId(), requestHash);
+        if (cached != null) {
+            return cached;
+        }
 
-        // 开启 Trace 上下文；try-with-resources 结束时 TraceScope#close 会将整轮事件写入 agent_traces 表
-        try (AgentTraceService.TraceScope ignored = agentTraceService.openTrace(traceId, initialState.sessionId(), userId)) {
-            try {
+        try (RedisSessionLockService.LockHandle lock = sessionLockService.acquire(userId, initialState.sessionId())) {
+            // 等待锁期间其他副本可能已经完成同一 requestId；再次检查可避免重复模型调用。
+            cached = chatIdempotencyService.findCompleted(userId, initialState.sessionId(), request.requestId(), requestHash);
+            if (cached != null) {
+                return cached;
+            }
+            ChatIdempotencyService.StartResult start = chatIdempotencyService.begin(
+                    userId, initialState.sessionId(), request.requestId(), requestHash);
+            if (start.status() == ChatIdempotencyService.Status.COMPLETED) {
+                return start.cachedResponse();
+            }
+            if (start.status() == ChatIdempotencyService.Status.IN_PROGRESS) {
+                throw new SessionConflictException("相同 requestId 的聊天请求仍在处理中，请稍后使用同一 requestId 重试");
+            }
+
+            // 锁内重新读取会话，确保使用上一位持锁者已提交的最新 version/state。
+            SessionState lockedState = sessionStateService.loadOrCreate(request.sessionId(), userId, request.sourceMode());
+            String traceId = "trace_" + UUID.randomUUID().toString().replace("-", "");
+            // 开启 Trace 上下文；try-with-resources 结束时 TraceScope#close 会将整轮事件写入 agent_traces 表
+            try (AgentTraceService.TraceScope ignored = agentTraceService.openTrace(traceId, lockedState.sessionId(), userId)) {
+                try {
                 // 记录请求开始时间（纳秒），用于最后计算整轮耗时
                 long startedAt = System.nanoTime();
                 // Trace 事件：REQUEST_RECEIVED | 阶段 HTTP | 输入=ChatRequest | 输出=初始 SessionState
-                agentTraceService.recordEvent("REQUEST_RECEIVED", "HTTP", request, initialState);
+                agentTraceService.recordEvent("REQUEST_RECEIVED", "HTTP", request, lockedState);
 
-                // 获取或创建该 sessionId 对应的锁对象，保证同一 session 并发请求串行执行
-                Object lock = sessionLocks.computeIfAbsent(initialState.sessionId(), key -> new Object());
-                synchronized (lock) {
-                    // 在锁内执行完整状态机，处理本轮用户输入
-                    ChatResponse response = handleTurn(userId, request, traceId, initialState);
-                    // Trace 事件：REQUEST_FINISHED | 阶段 HTTP | 输入=ChatRequest | 输出=ChatResponse | 耗时 ms
-                    agentTraceService.recordEvent("REQUEST_FINISHED", "HTTP", request, response, elapsedMs(startedAt));
-                    // 将最终响应返回给 Controller
-                    return response;
-                }
-            } catch (RuntimeException error) {
+                // 在 Redis 锁内执行完整状态机，处理本轮用户输入
+                ChatResponse response = handleTurn(userId, request, traceId, lockedState);
+                lock.assertHeld();
+                response = chatIdempotencyService.complete(
+                        userId, request.requestId(), start.processingToken(), traceId, response);
+                agentTraceService.recordEvent("IDEMPOTENT_RESPONSE_STORED", "IDEMPOTENCY",
+                        Map.of("requestId", request.requestId()), Map.of("traceId", traceId));
+                // Trace 事件：REQUEST_FINISHED | 阶段 HTTP | 输入=ChatRequest | 输出=ChatResponse | 耗时 ms
+                agentTraceService.recordEvent("REQUEST_FINISHED", "HTTP", request, response, elapsedMs(startedAt));
+                return response;
+                } catch (RuntimeException error) {
+                    chatIdempotencyService.fail(userId, request.requestId(), start.processingToken(), error);
                 // Trace 事件：REQUEST_FAILED | 阶段 HTTP | 输入=ChatRequest | 记录异常并将 Trace 标记 FAILED
                 agentTraceService.recordError("REQUEST_FAILED", "HTTP", request, error);
                 // 继续向上抛出，由全局异常处理器返回错误响应
                 throw error;
+                }
             }
         }
     }
@@ -229,7 +266,7 @@ public class DietOrchestratorService {
         SourceMode sourceMode = state.sourceMode();
 
         // 将用户消息 INSERT 到 diet_messages 表，role=user，intent=null，关联 traceId
-        sessionService.appendMessage(sessionId, "user", request.message(), null, traceId);
+        sessionService.appendMessage(sessionId, "user", request.message(), null, traceId, request.requestId());
 
         // Trace 事件：USER_MESSAGE_RECORDED | 阶段 SESSION | 输入=用户原文 | 输出=sessionId+sourceMode
         agentTraceService.recordEvent("USER_MESSAGE_RECORDED", "SESSION", request.message(), Map.of("sessionId", sessionId, "sourceMode", sourceMode));
@@ -241,7 +278,7 @@ public class DietOrchestratorService {
             // Trace 事件：PERSONAL_LIBRARY_EMPTY | 阶段 ROUTE | 输入=userId | 输出=引导文案
             agentTraceService.recordEvent("PERSONAL_LIBRARY_EMPTY", "ROUTE", Map.of("userId", userId), response);
             // 走纯文本完成分支：保存状态 + 落库助手消息 + 返回 ChatResponse
-            return completeTextOnly(sessionId, traceId, state, Intent.MEAL_RECOMMENDATION, response);
+            return completeTextOnly(sessionId, traceId, request.requestId(), state, Intent.MEAL_RECOMMENDATION, response);
         }
 
         // 意图识别：调用 IntentAgent：传入 sessionId、userId、用户原文、历史槽位、最近 3 条对话摘要
@@ -275,22 +312,22 @@ public class DietOrchestratorService {
         return switch (intent.intent()) {
             // 推荐或需澄清：走推荐主链路（澄清由 ClarifyAgent 内部决定）
             case MEAL_RECOMMENDATION, CLARIFY_NEEDED ->
-                    handleRecommendation(sessionId, userId, request.message(), traceId, state, intent);
+                    handleRecommendation(sessionId, userId, request.message(), traceId, request.requestId(), state, intent);
             // 调整上轮推荐：排除已推荐 ID，重跑推荐流水线
-            case MEAL_ADJUST -> handleAdjust(sessionId, userId, request.message(), traceId, state, intent);
+            case MEAL_ADJUST -> handleAdjust(sessionId, userId, request.message(), traceId, request.requestId(), state, intent);
             // 多餐规划：按餐次拆分检索后统一包装
-            case MEAL_PLAN -> handlePlan(sessionId, userId, request.message(), traceId, state, intent);
+            case MEAL_PLAN -> handlePlan(sessionId, userId, request.message(), traceId, request.requestId(), state, intent);
             // 健康风险：返回 NutritionGuard 保守提示，不走推荐
-            case HEALTH_RISK -> handleHealthRisk(sessionId, traceId, state);
+            case HEALTH_RISK -> handleHealthRisk(sessionId, traceId, request.requestId(), state);
             // 其他无关饮食的内容：返回固定引导文案
-            case OTHER -> handleChitchat(sessionId, traceId, state);
+            case OTHER -> handleChitchat(sessionId, traceId, request.requestId(), state);
         };
     }
 
     /**
      * 推荐主链路：合并槽位 → ClarifyAgent 判追问 → 槽位足够则进入 completeRecommendation。
      */
-    private ChatResponse handleRecommendation(String sessionId, Long userId, String userInput, String traceId, SessionState state, IntentResult intent) {
+    private ChatResponse handleRecommendation(String sessionId, Long userId, String userInput, String traceId, String requestId, SessionState state, IntentResult intent) {
         // 将历史 slots 与 IntentAgent 本轮识别的 slots 合并（本轮非空覆盖，本轮空保留历史）
         SlotBundle mergedSlots = slotMergeService.merge(state.slots(), intent.slots());
         NutritionConstraints mergedConstraints = NutritionConstraints.merge(
@@ -320,26 +357,26 @@ public class DietOrchestratorService {
         // 若 ClarifyResult.action == ASK，说明槽位不足，需要追问用户
         if (clarify.action() == ClarifyAction.ASK) {
             // 直接返回追问，不进入检索推荐
-            return completeAsk(sessionId, traceId, workingState, clarify);
+            return completeAsk(sessionId, traceId, requestId, workingState, clarify);
         }
         // 槽位足够：phase 切 RECOMMEND，excludeMealIds 为空
-        return completeRecommendation(sessionId, userId, userInput, traceId, workingState.withPhase(SessionPhase.RECOMMEND), List.of());
+        return completeRecommendation(sessionId, userId, userInput, traceId, requestId, workingState.withPhase(SessionPhase.RECOMMEND), List.of());
     }
 
-    private ChatResponse completeAsk(String sessionId, String traceId, SessionState workingState, ClarifyResult clarify) {
+    private ChatResponse completeAsk(String sessionId, String traceId, String requestId, SessionState workingState, ClarifyResult clarify) {
         // 将会话 phase 切换为 CLARIFY，表示当前处于澄清等待用户回复状态
         SessionState clarifyState = workingState.withPhase(SessionPhase.CLARIFY);
         // 将澄清态会话状态 UPDATE 到 diet_sessions 表
-        sessionStateService.save(clarifyState);
+        SessionState savedState = sessionStateService.save(clarifyState);
 
         // 将助手追问消息 INSERT 到 diet_messages，intent=CLARIFY_NEEDED
-        sessionService.appendMessage(sessionId, "assistant", clarify.questionToAsk(), Intent.CLARIFY_NEEDED.name(), traceId);
+        sessionService.appendMessage(sessionId, "assistant", clarify.questionToAsk(), Intent.CLARIFY_NEEDED.name(), traceId, requestId);
 
         // 构造澄清型 ChatResponse，携带 missingSlots 供前端展示
         ChatResponse response = ChatResponse.clarify(sessionId, traceId, clarify.questionToAsk(), clarify.missingSlots());
 
         // Trace 事件：RESPONSE_READY | 阶段 CLARIFY | 输入=clarify | 输出=ChatResponse
-        agentTraceService.recordEvent("RESPONSE_READY", "CLARIFY", clarify, response);
+        agentTraceService.recordEvent("RESPONSE_READY", "CLARIFY", savedState, response);
 
         // 直接返回追问，不进入检索推荐
         return response;
@@ -348,7 +385,7 @@ public class DietOrchestratorService {
     /**
      * 调整链路：合并槽位 → 取 excludeMealIds → 重跑推荐流水线。
      */
-    private ChatResponse handleAdjust(String sessionId, Long userId, String userInput, String traceId, SessionState state, IntentResult intent) {
+    private ChatResponse handleAdjust(String sessionId, Long userId, String userInput, String traceId, String requestId, SessionState state, IntentResult intent) {
         // 合并历史槽位与本轮 IntentAgent 识别的槽位
         SlotBundle mergedSlots = slotMergeService.merge(state.slots(), intent.slots());
         NutritionConstraints mergedConstraints = NutritionConstraints.merge(
@@ -367,13 +404,13 @@ public class DietOrchestratorService {
                 .withPhase(SessionPhase.RECOMMEND);
 
         // 进入推荐流水线，仅排除已推荐餐食，实现换一批
-        return completeRecommendation(sessionId, userId, userInput, traceId, workingState, excludeMealIds);
+        return completeRecommendation(sessionId, userId, userInput, traceId, requestId, workingState, excludeMealIds);
     }
 
     /**
      * 多餐规划链路：合并槽位 → 解析餐次 → 按餐次拆分检索重排 → 规划应答包装。
      */
-    private ChatResponse handlePlan(String sessionId, Long userId, String userInput, String traceId, SessionState state, IntentResult intent) {
+    private ChatResponse handlePlan(String sessionId, Long userId, String userInput, String traceId, String requestId, SessionState state, IntentResult intent) {
         // 合并历史槽位与本轮槽位（共享口味/健康诉求等；mealTime 会在拆分时按餐次覆盖）
         SlotBundle mergedSlots = slotMergeService.merge(state.slots(), intent.slots());
         NutritionConstraints mergedConstraints = NutritionConstraints.merge(
@@ -402,17 +439,18 @@ public class DietOrchestratorService {
                 .withSlots(planSlots)
                 .withNutritionConstraints(mergedConstraints)
                 .withPhase(SessionPhase.PLAN);
-        return completePlan(sessionId, userId, userInput, traceId, workingState, planMealTimes);
+        return completePlan(sessionId, userId, userInput, traceId, requestId, workingState, planMealTimes);
     }
 
     /**
      * 多餐规划流水线：按餐次 search/rank 各取一款 → PlanResponseAgent → Guard → 落库。
      */
     private ChatResponse completePlan(String sessionId,
-                                      Long userId,
-                                      String userInput,
-                                      String traceId,
-                                      SessionState state,
+                                       Long userId,
+                                       String userInput,
+                                       String traceId,
+                                       String requestId,
+                                       SessionState state,
                                       List<String> planMealTimes) {
         List<MealPlanService.PlannedMeal> plannedMeals = mealPlanService.planMeals(
                 state.sourceMode(), userId, userInput, state.slots(), state.nutritionConstraints(), planMealTimes);
@@ -442,7 +480,7 @@ public class DietOrchestratorService {
                     ? "你当前的个人餐食库里暂时拼不出多餐方案，可以补充更多饭堂菜，或者切换到公共餐食数据试试。"
                     : "公共餐食库里暂时拼不出完整的多餐方案，你可以补充口味、菜系，或换个人模式再试。");
             agentTraceService.recordEvent("NO_MEAL_PLAN_MATCHED", "PLAN", state, empty);
-            return completeTextOnly(sessionId, traceId, state, Intent.MEAL_PLAN, empty);
+            return completeTextOnly(sessionId, traceId, requestId, state, Intent.MEAL_PLAN, empty);
         }
 
         NutritionTarget personalizedNutritionTarget = userHealthProfileService.findNutritionTarget(userId);
@@ -477,9 +515,8 @@ public class DietOrchestratorService {
         }
 
         List<Long> lastIds = recommend.recommendations().stream().map(option -> option.itemId()).toList();
-        SessionState savedState = state.appendLastRecommendations(lastIds);
-        sessionStateService.save(savedState);
-        sessionService.appendMessage(sessionId, "assistant", response.speechText(), Intent.MEAL_PLAN.name(), traceId);
+        SessionState savedState = sessionStateService.save(state.appendLastRecommendations(lastIds));
+        sessionService.appendMessage(sessionId, "assistant", response.speechText(), Intent.MEAL_PLAN.name(), traceId, requestId);
 
         ChatResponse chatResponse = ChatResponse.answer(
                 sessionId, traceId, response.speechText(), response.displayBlocks(), response.nextAction());
@@ -490,27 +527,27 @@ public class DietOrchestratorService {
     /**
      * 健康风险分支：返回 NutritionGuard 保守提示，不走推荐链路。
      */
-    private ChatResponse handleHealthRisk(String sessionId, String traceId, SessionState state) {
+    private ChatResponse handleHealthRisk(String sessionId, String traceId, String requestId, SessionState state) {
         // 构造纯文本响应，内容为 conservativeMessage 固定文案
         ResponseResult response = ResponseResult.textOnly(riskGuardService.conservativeMessage());
         // 走纯文本完成分支，intent 标记为 HEALTH_RISK
-        return completeTextOnly(sessionId, traceId, state, Intent.HEALTH_RISK, response);
+        return completeTextOnly(sessionId, traceId, requestId, state, Intent.HEALTH_RISK, response);
     }
 
     /**
      * 闲聊分支：返回固定引导文案，不调用 LLM。
      */
-    private ChatResponse handleChitchat(String sessionId, String traceId, SessionState state) {
+    private ChatResponse handleChitchat(String sessionId, String traceId, String requestId, SessionState state) {
         // 构造纯文本响应，内容为 CHITCHAT_REPLY 常量
         ResponseResult response = ResponseResult.textOnly(CHITCHAT_REPLY);
         // 走纯文本完成分支，intent 标记为 CHITCHAT
-        return completeTextOnly(sessionId, traceId, state, Intent.OTHER, response);
+        return completeTextOnly(sessionId, traceId, requestId, state, Intent.OTHER, response);
     }
 
     /**
      * 完整推荐流水线：检索 → 重排 → LLM 生成理由与口语回复 → Guard 审查 → 持久化并返回。
      */
-    private ChatResponse completeRecommendation(String sessionId, Long userId, String userInput, String traceId, SessionState state, List<Long> excludeMealIds) {
+    private ChatResponse completeRecommendation(String sessionId, Long userId, String userInput, String traceId, String requestId, SessionState state, List<Long> excludeMealIds) {
         // 构造检索请求：sourceMode + userId + 当前 slots + excludeMealIds（检索层暂不使用 exclude，在 Rank 层过滤）
         List<MealItem> candidates = mealSearchService.search(new MealSearchRequest(
                 state.sourceMode(), userId, state.slots(), state.nutritionConstraints(), excludeMealIds, userInput));
@@ -545,7 +582,7 @@ public class DietOrchestratorService {
             // Trace 事件：NO_MEAL_MATCHED | 阶段 RECOMMEND | 输入=state | 输出=空结果提示文案
             agentTraceService.recordEvent("NO_MEAL_MATCHED", "RECOMMEND", state, empty);
             // 走纯文本完成分支，intent 保持当前 state.currentIntent()
-            return completeTextOnly(sessionId, traceId, state, state.currentIntent(), empty);
+            return completeTextOnly(sessionId, traceId, requestId, state, state.currentIntent(), empty);
         }
 
         // 调用 RecommendResponseAgent：top3 候选 + 用户原文 + slots → 推荐理由 + speechText + 卡片
@@ -587,10 +624,10 @@ public class DietOrchestratorService {
         SessionState savedState = state.appendLastRecommendations(lastIds);
 
         // 将更新后的会话状态 UPDATE 到 diet_sessions 表
-        sessionStateService.save(savedState);
+        savedState = sessionStateService.save(savedState);
 
         // 将助手回复 INSERT 到 diet_messages，intent=当前意图名，content=speechText
-        sessionService.appendMessage(sessionId, "assistant", response.speechText(), state.currentIntent().name(), traceId);
+        sessionService.appendMessage(sessionId, "assistant", response.speechText(), state.currentIntent().name(), traceId, requestId);
 
         // 构造最终 ChatResponse：含 speechText、餐食卡片 displayBlocks、nextAction=WAIT_USER
         ChatResponse chatResponse = ChatResponse.answer(sessionId, traceId, response.speechText(), response.displayBlocks(), response.nextAction());
@@ -605,14 +642,14 @@ public class DietOrchestratorService {
     /**
      * 纯文本分支的统一收尾：更新 intent → 保存状态 → 落库消息 → 返回 ChatResponse。
      */
-    private ChatResponse completeTextOnly(String sessionId, String traceId, SessionState state, Intent intent, ResponseResult response) {
+    private ChatResponse completeTextOnly(String sessionId, String traceId, String requestId, SessionState state, Intent intent, ResponseResult response) {
         // 将会话 currentIntent 更新为传入的 intent 枚举
         SessionState savedState = state.withIntent(intent);
         // 将更新后的会话状态 UPDATE 到 diet_sessions 表
-        sessionStateService.save(savedState);
+        savedState = sessionStateService.save(savedState);
 
         // 将助手纯文本回复 INSERT 到 diet_messages
-        sessionService.appendMessage(sessionId, "assistant", response.speechText(), intent.name(), traceId);
+        sessionService.appendMessage(sessionId, "assistant", response.speechText(), intent.name(), traceId, requestId);
 
         // 构造 ChatResponse（无餐食卡片，displayBlocks 为空）
         ChatResponse chatResponse = ChatResponse.answer(sessionId, traceId, response.speechText(), response.displayBlocks(), response.nextAction());

@@ -33,7 +33,7 @@ public class DietChatController {
     @PostMapping("/chat")
     public ChatResponse dietChat(
             Authentication authentication,
-            // 从请求体反序列化 ChatRequest（sessionId、message、sourceMode）
+            // 从请求体反序列化 ChatRequest（requestId、sessionId、message、sourceMode）
             @RequestBody ChatRequest request
     ) {
         // 用户身份仅来自已验证的 JWT，不能由客户端请求头伪造。

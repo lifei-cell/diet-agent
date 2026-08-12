@@ -107,6 +107,12 @@
             toast.className = "toast";
         }, 3200);
     }
+    function newRequestId() {
+        if (window.crypto && typeof window.crypto.randomUUID === "function") {
+            return window.crypto.randomUUID();
+        }
+        return `req_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
     function setLoading(button, loadingText) {
         if (!button) {
             return () => {};
@@ -321,6 +327,8 @@
         state.chat.messages.push({ role: "user", text: message });
         messageInput.value = "";
         state.chat.sending = true;
+        // 网络层重试必须复用该值，服务端会直接返回本次已完成的响应，避免重复调用 LLM。
+        const requestId = newRequestId();
         renderChat();
         try {
             if (!state.chat.sessionId) {
@@ -328,6 +336,7 @@
                 state.chat.sessionId = session.sessionId;
             }
             const response = await DietApi.chat({
+                requestId,
                 sessionId: state.chat.sessionId,
                 message,
                 sourceMode: state.chat.sourceMode,

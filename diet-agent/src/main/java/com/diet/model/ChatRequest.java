@@ -16,6 +16,8 @@ import lombok.experimental.Accessors;
 @AllArgsConstructor
 @NoArgsConstructor
 public class ChatRequest {
+    /** 客户端为本次发送生成的 UUID；重试必须复用，服务端据此返回首次结果。 */
+    private String requestId;
     private String sessionId;
     private String message;
     private SourceMode sourceMode;

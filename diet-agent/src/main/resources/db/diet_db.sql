@@ -111,9 +111,11 @@ CREATE TABLE IF NOT EXISTS `diet_messages`  (
   `content` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `intent` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
   `agent_trace_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `request_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
   `created_at` datetime NOT NULL,
   PRIMARY KEY (`id`) USING BTREE,
-  INDEX `idx_message_session`(`session_id` ASC, `created_at` ASC) USING BTREE
+  INDEX `idx_message_session`(`session_id` ASC, `created_at` ASC) USING BTREE,
+  UNIQUE INDEX `uk_message_request_role`(`session_id` ASC, `request_id` ASC, `role` ASC) USING BTREE
 ) ENGINE = InnoDB AUTO_INCREMENT = 39 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------
@@ -162,6 +164,7 @@ CREATE TABLE IF NOT EXISTS `diet_sessions`  (
   `phase` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `slots` json NOT NULL,
   `last_recommendations` json NOT NULL,
+  `version` bigint NOT NULL DEFAULT 0,
   `created_at` datetime NOT NULL,
   `updated_at` datetime NOT NULL,
   PRIMARY KEY (`id`) USING BTREE,
@@ -320,6 +323,28 @@ CREATE TABLE IF NOT EXISTS `meal_slot_tag`  (
   `tag_value` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   PRIMARY KEY (`meal_id`, `slot_name`, `tag_value`) USING BTREE,
   INDEX `idx_meal_slot_lookup`(`slot_name` ASC, `tag_value` ASC, `meal_id` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
+
+-- ----------------------------
+-- Table structure for diet_chat_request
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS `diet_chat_request`  (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `user_id` bigint NOT NULL,
+  `session_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `request_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `request_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `status` varchar(16) CHARACTER SET ascii COLLATE ascii_general_ci NOT NULL,
+  `processing_token` varchar(64) CHARACTER SET ascii COLLATE ascii_general_ci NULL DEFAULT NULL,
+  `response_json` json NULL,
+  `trace_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL,
+  `failure_code` varchar(128) CHARACTER SET ascii COLLATE ascii_general_ci NULL DEFAULT NULL,
+  `created_at` datetime NOT NULL,
+  `updated_at` datetime NOT NULL,
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `uk_chat_request_user_request`(`user_id` ASC, `request_id` ASC) USING BTREE,
+  INDEX `idx_chat_request_status`(`status` ASC, `updated_at` ASC) USING BTREE,
+  INDEX `idx_chat_request_session`(`session_id` ASC, `updated_at` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci ROW_FORMAT = DYNAMIC;
 
 -- ----------------------------

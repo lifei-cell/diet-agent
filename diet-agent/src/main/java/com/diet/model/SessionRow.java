@@ -11,6 +11,7 @@ public class SessionRow {
     private String phase;
     private String slots;
     private String lastRecommendations;
+    private long version;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

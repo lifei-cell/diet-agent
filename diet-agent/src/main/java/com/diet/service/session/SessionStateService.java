@@ -9,10 +9,12 @@ import com.diet.model.SessionState;
 import com.diet.model.SlotBundle;
 import com.diet.model.NutritionConstraints;
 import com.diet.enums.SourceMode;
+import com.diet.exception.SessionConflictException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.UUID;
@@ -75,8 +77,20 @@ public class SessionStateService {
                 throw new DietException("会话不存在或无访问权限");
             }
             SessionState state = SessionState.fresh(sessionId, userId, sourceMode);
-            insert(state);
-            return state;
+            try {
+                insert(state);
+                return state;
+            } catch (DuplicateKeyException duplicate) {
+                // 两个副本可能同时尝试创建同一个客户端 sessionId；读取获胜者即可。
+                SessionRow concurrentRow = sessionMapper.findById(sessionId, userId);
+                if (concurrentRow != null) {
+                    return fromRow(concurrentRow, sourceMode);
+                }
+                if (sessionMapper.findByIdAnyUser(sessionId) != null) {
+                    throw new DietException("会话不存在或无访问权限");
+                }
+                throw duplicate;
+            }
         }
         // 存在则从 DB 行反序列化为 SessionState
         return fromRow(row, sourceMode);
@@ -86,12 +100,13 @@ public class SessionStateService {
      * 持久化 Orchestrator 更新后的会话状态。
      * 澄清/推荐/固定回复分支结束前都会调用。
      */
-    public void save(SessionState state) {
+    public SessionState save(SessionState state) {
         SessionRow row = toRow(state);              // SessionState → SessionRow
         int updated = sessionMapper.update(row);    // UPDATE diet_sessions
         if (updated == 0) {
-            throw new DietException("会话状态保存失败"); // 影响行数 0 说明 sessionId 不存在或并发冲突
+            throw new SessionConflictException("会话状态已被其他副本更新，请重试");
         }
+        return state.withVersion(state.version() + 1);
     }
 
     /**
@@ -129,7 +144,8 @@ public class SessionStateService {
                     currentIntent,                           // 当前意图
                     slots,                                   // 槽位
                     nutritionConstraints,                    // 营养硬约束
-                    parseLongList(row.getLastRecommendations()) // 上轮推荐 ID 列表
+                    parseLongList(row.getLastRecommendations()), // 上轮推荐 ID 列表
+                    row.getVersion()
             );
         } catch (Exception e) {
             throw new DietException("会话状态解析失败", e);
@@ -146,6 +162,7 @@ public class SessionStateService {
         row.setPhase(state.phase().name());
         row.setSlots(toSlotsJson(state));                          // slots + _meta 序列化
         row.setLastRecommendations(toJson(state.lastRecommendations())); // 推荐 ID 列表 JSON
+        row.setVersion(state.version());
         return row;
     }
 

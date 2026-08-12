@@ -34,6 +34,8 @@ public class SessionState {
     private NutritionConstraints nutritionConstraints;
     /** 本会话已推荐过的餐食 ID（累积），用于“换一批”时排除重复。 */
     private List<Long> lastRecommendations;
+    /** MySQL 乐观锁版本；每次成功保存递增，拒绝旧副本覆盖新状态。 */
+    private long version;
 
     /**
      * 创建一个新的空状态。
@@ -48,35 +50,36 @@ public class SessionState {
                 null,
                 SlotBundle.empty(),
                 NutritionConstraints.empty(),
-                List.of()
+                List.of(),
+                0
         );
     }
 
     /** 返回更新阶段后的新状态。 */
     public SessionState withPhase(SessionPhase newPhase) {
-        return new SessionState(sessionId, userId, newPhase, sourceMode, currentIntent, slots, nutritionConstraints, lastRecommendations);
+        return new SessionState(sessionId, userId, newPhase, sourceMode, currentIntent, slots, nutritionConstraints, lastRecommendations, version);
     }
 
     /** 返回更新意图后的新状态。 */
     public SessionState withIntent(Intent newIntent) {
-        return new SessionState(sessionId, userId, phase, sourceMode, newIntent, slots, nutritionConstraints, lastRecommendations);
+        return new SessionState(sessionId, userId, phase, sourceMode, newIntent, slots, nutritionConstraints, lastRecommendations, version);
     }
 
     /** 返回更新槽位后的新状态。 */
     public SessionState withSlots(SlotBundle newSlots) {
-        return new SessionState(sessionId, userId, phase, sourceMode, currentIntent, newSlots, nutritionConstraints, lastRecommendations);
+        return new SessionState(sessionId, userId, phase, sourceMode, currentIntent, newSlots, nutritionConstraints, lastRecommendations, version);
     }
 
     /** 返回更新营养硬约束后的新状态。 */
     public SessionState withNutritionConstraints(NutritionConstraints newConstraints) {
         return new SessionState(sessionId, userId, phase, sourceMode, currentIntent, slots,
-                NutritionConstraints.sanitize(newConstraints), lastRecommendations);
+                NutritionConstraints.sanitize(newConstraints), lastRecommendations, version);
     }
 
     /** 返回更新推荐历史后的新状态（覆盖）。 */
     public SessionState withLastRecommendations(List<Long> newLastRecommendations) {
         return new SessionState(sessionId, userId, phase, sourceMode, currentIntent, slots, nutritionConstraints,
-                newLastRecommendations == null ? List.of() : List.copyOf(newLastRecommendations));
+                newLastRecommendations == null ? List.of() : List.copyOf(newLastRecommendations), version);
     }
 
     /** 将本轮推荐 ID 追加到累积历史，去重并保持插入顺序。 */
@@ -86,11 +89,17 @@ public class SessionState {
         }
         LinkedHashSet<Long> merged = new LinkedHashSet<>(lastRecommendations == null ? List.of() : lastRecommendations);
         merged.addAll(newIds);
-        return new SessionState(sessionId, userId, phase, sourceMode, currentIntent, slots, nutritionConstraints, List.copyOf(merged));
+        return new SessionState(sessionId, userId, phase, sourceMode, currentIntent, slots, nutritionConstraints, List.copyOf(merged), version);
     }
 
     /** 返回更新数据源模式后的新状态，主要用于首次绑定 sourceMode。 */
     public SessionState withSourceMode(SourceMode newSourceMode) {
-        return new SessionState(sessionId, userId, phase, newSourceMode, currentIntent, slots, nutritionConstraints, lastRecommendations);
+        return new SessionState(sessionId, userId, phase, newSourceMode, currentIntent, slots, nutritionConstraints, lastRecommendations, version);
+    }
+
+    /** Returns the same business state carrying the persisted optimistic-lock version. */
+    public SessionState withVersion(long newVersion) {
+        return new SessionState(sessionId, userId, phase, sourceMode, currentIntent, slots, nutritionConstraints,
+                lastRecommendations, newVersion);
     }
 }

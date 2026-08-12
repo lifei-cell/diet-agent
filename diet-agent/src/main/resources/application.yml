@@ -18,6 +18,13 @@ spring:
     multipart:
       max-file-size: 5MB
       max-request-size: 6MB
+  data:
+    redis:
+      # 供 Redisson RLock 客户端使用（不启用 Spring Data Redis）。
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:2s}
 mybatis:
   mapper-locations: classpath:mapper/*.xml
   type-aliases-package: com.diet.model
@@ -37,6 +44,20 @@ diet:
   llm:
     main-model: qwen3-max
     light-model: qwen3-max
+    resilience:
+      # 单次文本 Agent 的阻塞上限；达到上限后可按 max-attempts 重试一次。
+      agent-timeout-ms: ${DIET_LLM_AGENT_TIMEOUT_MS:12000}
+      # 图像模型使用独立 HTTP 连接/读取超时，避免上传识别长期占用 Web 请求线程。
+      vision-connect-timeout-ms: ${DIET_LLM_VISION_CONNECT_TIMEOUT_MS:3000}
+      vision-read-timeout-ms: ${DIET_LLM_VISION_READ_TIMEOUT_MS:10000}
+      # 总尝试次数（含首次），上限在代码中限制为 3，控制故障时的成本和尾延迟。
+      max-attempts: ${DIET_LLM_MAX_ATTEMPTS:2}
+      initial-backoff-ms: ${DIET_LLM_INITIAL_BACKOFF_MS:250}
+      max-backoff-ms: ${DIET_LLM_MAX_BACKOFF_MS:1000}
+      jitter-ms: ${DIET_LLM_RETRY_JITTER_MS:100}
+      # 连续可用性故障达到阈值后快速降级；冷却期后放行一次探测调用。
+      circuit-failure-threshold: ${DIET_LLM_CIRCUIT_FAILURE_THRESHOLD:5}
+      circuit-open-ms: ${DIET_LLM_CIRCUIT_OPEN_MS:30000}
   vision:
     # 可通过 DIET_VISION_MODEL / DIET_VISION_API_URL 覆盖为所属地域和工作空间的多模态模型端点。
     model: ${DIET_VISION_MODEL:qwen3.7-plus}
@@ -49,6 +70,16 @@ diet:
       bucket: ${MINIO_BUCKET:diet-checkin-images}
   session:
     max-history-turns: 10
+    # 多副本写会话时必须先取得 Redisson RLock；不传 leaseTime 时由 Watchdog 自动续期。
+    distributed-lock:
+      key-prefix: ${DIET_SESSION_LOCK_KEY_PREFIX:diet:session-lock:}
+      wait-ms: ${DIET_SESSION_LOCK_WAIT_MS:5000}
+      # Watchdog 租约；持锁 JVM 正常时会自动续期，崩溃后超时释放。时间越长，故障接管越慢。
+      watchdog-timeout-ms: ${DIET_SESSION_LOCK_WATCHDOG_TIMEOUT_MS:45000}
+      connect-timeout-ms: ${DIET_SESSION_LOCK_CONNECT_TIMEOUT_MS:3000}
+      command-timeout-ms: ${DIET_SESSION_LOCK_COMMAND_TIMEOUT_MS:2000}
+    # PROCESSING 超过该时间可被同一 requestId 的重试接管；正常结果会持久化并直接复用。
+    idempotency-processing-timeout-seconds: ${DIET_SESSION_IDEMPOTENCY_PROCESSING_TIMEOUT_SECONDS:90}
   retrieval:
     # 结构化倒排检索始终启用；关键词通道为“主库硬过滤 + 应用侧 BM25”。
     keyword:

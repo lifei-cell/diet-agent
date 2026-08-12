@@ -37,6 +37,20 @@ services:
       retries: 20
       start_period: 10s
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: diet-agent-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
   app:
     build:
       context: .
@@ -49,6 +63,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/diet_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
       SPRING_DATASOURCE_USERNAME: diet_app
@@ -58,6 +74,24 @@ services:
       JWT_EXPIRATION_SECONDS: ${JWT_EXPIRATION_SECONDS:-86400}
       DIET_LLM_MAIN_MODEL: ${DIET_LLM_MAIN_MODEL:-qwen3-max}
       DIET_LLM_LIGHT_MODEL: ${DIET_LLM_LIGHT_MODEL:-qwen3-max}
+      DIET_LLM_AGENT_TIMEOUT_MS: ${DIET_LLM_AGENT_TIMEOUT_MS:-12000}
+      DIET_LLM_VISION_CONNECT_TIMEOUT_MS: ${DIET_LLM_VISION_CONNECT_TIMEOUT_MS:-3000}
+      DIET_LLM_VISION_READ_TIMEOUT_MS: ${DIET_LLM_VISION_READ_TIMEOUT_MS:-10000}
+      DIET_LLM_MAX_ATTEMPTS: ${DIET_LLM_MAX_ATTEMPTS:-2}
+      DIET_LLM_INITIAL_BACKOFF_MS: ${DIET_LLM_INITIAL_BACKOFF_MS:-250}
+      DIET_LLM_MAX_BACKOFF_MS: ${DIET_LLM_MAX_BACKOFF_MS:-1000}
+      DIET_LLM_RETRY_JITTER_MS: ${DIET_LLM_RETRY_JITTER_MS:-100}
+      DIET_LLM_CIRCUIT_FAILURE_THRESHOLD: ${DIET_LLM_CIRCUIT_FAILURE_THRESHOLD:-5}
+      DIET_LLM_CIRCUIT_OPEN_MS: ${DIET_LLM_CIRCUIT_OPEN_MS:-30000}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      DIET_SESSION_LOCK_KEY_PREFIX: ${DIET_SESSION_LOCK_KEY_PREFIX:-diet:session-lock:}
+      DIET_SESSION_LOCK_WAIT_MS: ${DIET_SESSION_LOCK_WAIT_MS:-5000}
+      DIET_SESSION_LOCK_WATCHDOG_TIMEOUT_MS: ${DIET_SESSION_LOCK_WATCHDOG_TIMEOUT_MS:-45000}
+      DIET_SESSION_LOCK_CONNECT_TIMEOUT_MS: ${DIET_SESSION_LOCK_CONNECT_TIMEOUT_MS:-3000}
+      DIET_SESSION_LOCK_COMMAND_TIMEOUT_MS: ${DIET_SESSION_LOCK_COMMAND_TIMEOUT_MS:-2000}
+      DIET_SESSION_IDEMPOTENCY_PROCESSING_TIMEOUT_SECONDS: ${DIET_SESSION_IDEMPOTENCY_PROCESSING_TIMEOUT_SECONDS:-90}
       DIET_VISION_MODEL: ${DIET_VISION_MODEL:-qwen3.7-plus}
       DIET_VISION_API_URL: ${DIET_VISION_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
       MINIO_ENDPOINT: http://minio:9000
@@ -76,3 +110,4 @@ services:
 volumes:
   mysql_data:
   minio_data:
+  redis_data:

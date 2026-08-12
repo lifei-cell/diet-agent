@@ -4,6 +4,7 @@ import com.diet.mapper.AgentTraceMapper;
 import com.diet.exception.DietException;
 import com.diet.model.TraceLabelRequest;
 import com.diet.model.RequestTraceRow;
+import com.diet.service.llm.LlmCallResilience;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.message.Msg;
@@ -12,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,10 +48,23 @@ public class AgentTraceService {
     /** Jackson 序列化工具，将 payload 和 trace_json 转为 JSON 字符串。 */
     private final ObjectMapper objectMapper;
 
+    /** External LLM retry/circuit policy shared by all text Agents. */
+    private final LlmCallResilience llmCallResilience;
+
+    /** Hard deadline for one text-Agent attempt; retries have their own fresh attempt budget. */
+    private final long agentTimeoutMs;
+
     /** 构造器注入 Mapper 和 ObjectMapper。 */
-    public AgentTraceService(AgentTraceMapper agentTraceMapper, ObjectMapper objectMapper) {
+    public AgentTraceService(
+            AgentTraceMapper agentTraceMapper,
+            ObjectMapper objectMapper,
+            LlmCallResilience llmCallResilience,
+            @org.springframework.beans.factory.annotation.Value("${diet.llm.resilience.agent-timeout-ms:12000}") long agentTimeoutMs
+    ) {
         this.agentTraceMapper = agentTraceMapper;
         this.objectMapper = objectMapper;
+        this.llmCallResilience = llmCallResilience;
+        this.agentTimeoutMs = Math.max(1_000, agentTimeoutMs);
     }
 
     /**
@@ -100,11 +115,20 @@ public class AgentTraceService {
         // 记录 Agent 调用开始时间（纳秒）
         long startedAt = System.nanoTime();
         try {
-            // 构造 USER 角色消息并同步调用 Agent（block 等待 LLM 返回）
-            Msg response = agent.call(Msg.builder()
-                    .role(MsgRole.USER)
-                    .textContent(inputText)
-                    .build()).block();
+            LlmCallResilience.Execution<Msg> execution = llmCallResilience.execute("text-agent", () -> {
+                // 每次重试前清理请求内记忆，避免失败调用的半截上下文污染下一次尝试。
+                agent.getMemory().clear();
+                return agent.call(Msg.builder()
+                        .role(MsgRole.USER)
+                        .textContent(inputText)
+                        .build()).block(Duration.ofMillis(agentTimeoutMs));
+            });
+            Msg response = execution.value();
+            if (execution.attempts() > 1) {
+                recordEvent("LLM_RETRY_RECOVERED", "RESILIENCE",
+                        Map.of("channel", "text-agent", "agentName", agentName),
+                        Map.of("attempts", execution.attempts()));
+            }
             // 成功：记录 AGENT_CALL 事件，input=inputText，output=response 文本，latency=耗时 ms
             recordAgentCall(sessionId, agentName, modelName, inputText, response, elapsedMs(startedAt), null);
             // 将 Agent 原始响应返回给调用方（IntentAgent/ClarifyAgent/RecommendResponseAgent）
@@ -112,6 +136,11 @@ public class AgentTraceService {
         } catch (RuntimeException error) {
             // 失败：记录 AGENT_CALL 事件，output=null，error 非空，并 markFailed
             recordAgentCall(sessionId, agentName, modelName, inputText, null, elapsedMs(startedAt), error);
+            if (error instanceof LlmCallResilience.LlmCallException llmError) {
+                recordEvent("LLM_CALL_DEGRADED", "RESILIENCE",
+                        Map.of("channel", llmError.channel(), "agentName", agentName),
+                        Map.of("attempts", llmError.attempts(), "circuitOpen", llmError.circuitOpen()));
+            }
             // 继续向上抛出，由调用方 catch 或 Orchestrator 捕获
             throw error;
         }
